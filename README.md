@@ -25,16 +25,16 @@ Currently supported:
 
 ### Linux / macOS
 ```bash
-git clone https://github.com/yourusername/tg-tui.git
-cd tg-tui
+git clone https://github.com/dnacd/tgtui.git
+cd tgtui
 chmod +x scripts/install.sh
 ./scripts/install.sh
 ```
 
 ### Windows
 ```powershell
-git clone https://github.com/yourusername/tg-tui.git
-cd tg-tui
+git clone https://github.com/dnacd/tgtui.git
+cd tgtui
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
@@ -56,13 +56,27 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
    tgt tui
    ```
 
-## Hotkeys
+## Keyboard Shortcuts (Keyboard-Only Mode)
 
-- `/` : Focus chat search
-- `Esc` : Clear search / Focus message input
+The application is designed to be fully navigable via keyboard.
+
+### Global
 - `Ctrl+Q` : Quit application
-- `r` : Refresh current chat (coming soon)
-- `l` : Reload dialogs (coming soon)
+
+### Navigation & Focus
+- `Ctrl+L` : Focus Chat List
+- `Ctrl+I` or `Esc` : Focus Message Input
+- `PageUp` / `PageDown` : Scroll messages
+- `p` : Show My Profile
+- `u` : Show Partner's Profile (when in chat)
+- `b` or `Esc` : Back (from Profile screens)
+
+### Search
+- `/` or `Ctrl+S` : Focus Search bar
+
+### Actions
+- `r` : React to the last message in current chat
+- `l` : Reload all dialogs (refresh chat list)
 
 ## Commands
 
