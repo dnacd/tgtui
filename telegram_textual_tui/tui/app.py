@@ -82,9 +82,7 @@ class TGTApp(App):
     }
     """
 
-    BINDINGS = [
-        Binding("ctrl+q", "quit", "Quit", show=True),
-    ]
+    BINDINGS = Keymap.GLOBAL
 
     def __init__(self, *args, **kwargs):
         """
@@ -112,6 +110,10 @@ class TGTApp(App):
     def compose(self) -> ComposeResult:
         """
         Compose the main application layout including the global header and footer.
+        """
+        yield Header()
+        yield Footer()
+ layout including the global header and footer.
         """
         yield Header()
         yield Footer()

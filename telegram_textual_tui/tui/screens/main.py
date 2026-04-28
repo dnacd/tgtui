@@ -30,6 +30,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Input, Label, ListView, RichLog
 
+from telegram_textual_tui.tui.config.keymap import Keymap
 from telegram_textual_tui.tui.screens.profile import ProfileScreen
 from telegram_textual_tui.tui.widgets.chat_list import ChatItem, ChatList
 from telegram_textual_tui.utils.formatters import get_telegram_entity_title
@@ -55,19 +56,8 @@ class MainScreen(Screen):
         self._reaction_target_message_id = None
         self._last_received_message_id = None
 
-    BINDINGS = [
-        Binding("/", "focus_search", "Search"),
-        Binding("ctrl+s", "focus_search", "Search", show=False),
-        Binding("ctrl+l", "focus_chat_list", "Chats"),
-        Binding("ctrl+i", "focus_message_input", "Input"),
-        Binding("escape", "focus_message_input", "Input", show=False),
-        Binding("p", "show_my_profile", "My Profile"),
-        Binding("u", "show_partner_profile", "User Profile"),
-        Binding("r", "react_to_last_message", "React Last"),
-        Binding("l", "reload_all_dialogs", "Reload"),
-        Binding("pageup", "scroll_messages_up", "Scroll Up", show=False),
-        Binding("pagedown", "scroll_messages_down", "Scroll Down", show=False),
-    ]
+    BINDINGS = Keymap.MAIN_SCREEN
+
 
     async def action_show_my_profile(self) -> None:
         """
