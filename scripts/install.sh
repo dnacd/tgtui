@@ -21,7 +21,7 @@ if ! command -v pipx &> /dev/null; then
 fi
 
 echo "Installing package and dependencies..."
-python3 -m pipx install "$PROJECT_ROOT" --force --include-deps &> /dev/null
+python3 -m pipx install "$PROJECT_ROOT" --force --include-deps
 
 echo "---------------------------------------"
 echo "Success! TGT is now installed."
