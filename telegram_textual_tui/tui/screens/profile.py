@@ -97,13 +97,19 @@ class ProfileScreen(Screen):
 
     async def _load_avatar(self, user_entity) -> None:
         """Load and render the user avatar."""
-        avatar_manager = self.app.telegram_manager.avatar_manager
-        avatar_data = await avatar_manager.get_avatar(user_entity, size="large")
-        avatar_widget = self.query_one("#profile-avatar", AnsiImage)
-        if avatar_data:
-            avatar_widget.update_image(avatar_data)
-        else:
-            avatar_widget.set_loading(False)
+        try:
+            avatar_manager = self.app.telegram_manager.avatar_manager
+            avatar_data = await avatar_manager.get_avatar(user_entity, size="large")
+            avatar_widget = self.query_one("#profile-avatar", AnsiImage)
+            if avatar_data:
+                await avatar_widget.update_image(avatar_data)
+            else:
+                avatar_widget.set_loading(False)
+        except Exception:
+            try:
+                self.query_one("#profile-avatar", AnsiImage).set_loading(False)
+            except Exception:
+                pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """

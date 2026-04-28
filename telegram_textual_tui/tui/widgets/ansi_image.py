@@ -2,6 +2,7 @@
 Custom Textual widget for rendering ANSI art.
 """
 
+import asyncio
 from typing import Optional, Union
 from rich.text import Text
 from textual.widgets import Static
@@ -39,7 +40,7 @@ class AnsiImage(Static):
         if image_data:
             self._cached_renderable = Text.from_ansi(image_data)
 
-    def update_image(self, ansi_text: str) -> None:
+    async def update_image(self, ansi_text: str) -> None:
         """
         Update the displayed image with a new ANSI string.
         
@@ -50,7 +51,8 @@ class AnsiImage(Static):
             ansi_text: The new ANSI-encoded string to display.
         """
         if ansi_text:
-            self._cached_renderable = Text.from_ansi(ansi_text)
+            loop = asyncio.get_running_loop()
+            self._cached_renderable = await loop.run_in_executor(None, Text.from_ansi, ansi_text)
         self.is_loading = False
         self.refresh()
 

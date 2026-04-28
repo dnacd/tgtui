@@ -73,7 +73,7 @@ class ChatItem(ListItem):
             
             avatar_widget = self.query_one("#chat-avatar", AnsiImage)
             if avatar_data:
-                avatar_widget.update_image(avatar_data)
+                await avatar_widget.update_image(avatar_data)
             else:
                 avatar_widget.set_loading(False)
         except Exception:

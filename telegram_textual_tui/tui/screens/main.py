@@ -229,12 +229,13 @@ class MainScreen(Screen):
         self._reaction_target_message_id = message_id
 
     async def action_reload_all_dialogs(self) -> None:
-        """Update the sidebar with the latest 100 dialogs."""
+        """Update the sidebar with the latest 100 dialogs using batch mounting."""
         chat_list = self.query_one(ChatList)
         chat_list.clear()
         dialogs = await self._chat_controller.fetch_dialogs(limit=100)
-        for dialog in dialogs:
-            await chat_list.append(ChatItem(dialog))
+        
+        items = [ChatItem(dialog) for dialog in dialogs]
+        await chat_list.mount_all(items)
         self._sync_chat_filter()
 
     def compose(self) -> ComposeResult:
@@ -433,12 +434,35 @@ class MainScreen(Screen):
         log.scroll_end()
 
     async def _render_messages(self) -> None:
-        """Render all loaded messages to the log using an optimized cache-aware process."""
+        """Render all loaded messages using a high-performance batch process."""
         log = self.query_one("#messages", RichLog)
         log.clear()
-        
+
+        # Pre-fetch all unknown senders in parallel to avoid sequential API hits during render
+        unknown_sids = set()
         for msg in self._loaded_messages:
-            panel = await self._get_message_panel(msg)
+            sid = get_message_sender_id(msg)
+            if sid and sid not in self._sender_cache:
+                unknown_sids.add(sid)
+        
+        if unknown_sids:
+            try:
+                # Telethon's get_entity handles list of IDs efficiently
+                entities = await self.app.telegram_manager.client.get_entity(list(unknown_sids))
+                if not isinstance(entities, list):
+                    entities = [entities]
+                for entity in entities:
+                    self._sender_cache[entity.id] = get_telegram_entity_title(entity)
+            except Exception:
+                pass
+
+        # Build all panels first
+        panels = []
+        for msg in self._loaded_messages:
+            panels.append(await self._get_message_panel(msg))
+        
+        # Batch write to avoid excessive UI ticks
+        for panel in panels:
             log.write(panel)
         
         log.scroll_end()
@@ -451,10 +475,9 @@ class MainScreen(Screen):
         self._selected_dialog_entity = entity
         
         self._loaded_messages = []
-        self._sender_cache = {}
         self._read_outbox_maximum_id = 0
         
-        if self._me:
+        if self._me and self._me.id not in self._sender_cache:
             self._sender_cache[self._me.id] = get_telegram_entity_title(self._me)
 
         if item and hasattr(item.dialog, "read_outbox_max_id"):

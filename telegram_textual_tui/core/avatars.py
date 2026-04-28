@@ -106,21 +106,20 @@ class AvatarManager:
         try:
             peer_id = peer.id
             cache_path = self._get_cache_path(peer_id, size)
+            loop = asyncio.get_running_loop()
 
-            if cache_path.exists():
-                return cache_path.read_text(encoding="utf-8")
+            if await loop.run_in_executor(None, cache_path.exists):
+                return await loop.run_in_executor(None, cache_path.read_text, "utf-8")
 
             temp_photo = self.cache_dir / f"temp_{peer_id}.jpg"
             
             path = await self.client.download_profile_photo(peer, file=str(temp_photo))
             
             if path and ansi_render_native:
-                original_bytes = temp_photo.read_bytes()
+                original_bytes = await loop.run_in_executor(None, temp_photo.read_bytes)
                 cols = 50 if size == "large" else 16
                 
                 async with self._render_semaphore:
-                    await asyncio.sleep(0.1)
-                    loop = asyncio.get_running_loop()
                     rendered_text = await loop.run_in_executor(
                         None,
                         self._render_to_ansi_sync, 
@@ -129,11 +128,11 @@ class AvatarManager:
                     )
                 
                 if rendered_text:
-                    cache_path.write_text(rendered_text, encoding="utf-8")
+                    await loop.run_in_executor(None, lambda: cache_path.write_text(rendered_text, encoding="utf-8"))
                     return rendered_text
             
             identicon = self._generate_identicon(peer_id, size == "large")
-            cache_path.write_text(identicon, encoding="utf-8")
+            await loop.run_in_executor(None, lambda: cache_path.write_text(identicon, encoding="utf-8"))
             return identicon
 
         except Exception as e:
