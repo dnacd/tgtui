@@ -51,7 +51,6 @@ class TGTApp(App):
         width: 1fr;
         height: 1;
         content-align: left middle;
-        text-overflow: ellipsis;
     }
     .chat-unread {
         width: auto;
