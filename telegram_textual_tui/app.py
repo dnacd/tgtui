@@ -35,6 +35,7 @@ output_console = Console()
 def init():
     """
     Perform initial application setup by generating API credentials.
+    Opens the Telegram API portal and guides the user through obtaining credentials.
     """
     current_configuration = load_application_configuration()
     if current_configuration:
@@ -68,7 +69,7 @@ def login(
     phone_number: Optional[str] = typer.Option(None, "--phone", "-p", help="Phone number in international format"),
 ):
     """
-    Authenticate the application with the Telegram servers.
+    Authenticate the application with the Telegram servers and create a local session.
     """
     ensure_application_directory_exists()
     application_config = load_application_configuration()
@@ -112,14 +113,13 @@ def login(
         
         try:
             await telegram_manager.client.sign_in(phone_number, authentication_code)
+        except SessionPasswordNeededError:
+            two_factor_password = typer.prompt("Enter your 2FA password", hide_input=True)
+            await telegram_manager.client.sign_in(password=two_factor_password)
         except Exception as error:
-            if isinstance(error, SessionPasswordNeededError):
-                two_factor_password = typer.prompt("Enter your 2FA password", hide_input=True)
-                await telegram_manager.client.sign_in(password=two_factor_password)
-            else:
-                output_console.print(f"[red]Login failed: {error}[/red]")
-                await telegram_manager.disconnect_from_telegram()
-                raise typer.Exit(1)
+            output_console.print(f"[red]Login failed: {error}[/red]")
+            await telegram_manager.disconnect_from_telegram()
+            raise typer.Exit(1)
 
         user_details = await telegram_manager.get_authenticated_user_details()
         output_console.print(f"[green]Successfully logged in as {user_details.first_name}![/green]")

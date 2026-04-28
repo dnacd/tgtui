@@ -1,34 +1,40 @@
 """
-Widget for displaying the list of Telegram dialogs with filtering and smart navigation.
+Widget for displaying the list of Telegram dialogs with avatars and filtering.
 """
 
 from typing import Any, Callable, Dict, Optional
 
 from telethon.tl.types import Channel, Chat, User
 from textual.app import ComposeResult
-from textual.widgets import Label, ListItem, ListView
+from textual.widgets import Label, ListItem, ListView, Static
 
 from telegram_textual_tui.utils.formatters import get_telegram_entity_title
 
 
 class ChatItem(ListItem):
     """
-    A single interactive item within the chat list sidebar.
+    A single interactive item within the chat list sidebar with an avatar placeholder.
     """
 
     def __init__(self, dialog: Any) -> None:
         """
-        Initialize a chat list item with Telegram dialog data.
+        Initialize a chat list item with dialog data and avatar styling.
         """
         super().__init__()
         self.dialog = dialog
         self.title_text = get_telegram_entity_title(self.dialog.entity)
         self.search_text = self.title_text.lower()
+        
+        self.initials = (self.title_text[0] if self.title_text else "?").upper()
+        
+        colors = ["blue", "green", "yellow", "magenta", "cyan", "white"]
+        self.avatar_color = colors[abs(hash(str(self.dialog.id))) % len(colors)]
 
     def compose(self) -> ComposeResult:
         """
         Create the visual structure for the chat item.
         """
+        yield Static("•", classes=f"chat-avatar avatar-{self.avatar_color}")
         yield Label(self.title_text, classes="chat-title", markup=False)
         if self.dialog.unread_count > 0:
             yield Label(str(self.dialog.unread_count), classes="chat-unread")
@@ -47,7 +53,7 @@ class ChatList(ListView):
     }
 
     def action_cursor_down(self) -> None:
-        """Move cursor to the next visible item."""
+        """Move cursor to the next visible item in the list."""
         if self.index is None:
             return
             
@@ -59,7 +65,7 @@ class ChatList(ListView):
             next_index += 1
 
     def action_cursor_up(self) -> None:
-        """Move cursor to the previous visible item."""
+        """Move cursor to the previous visible item in the list."""
         if self.index is None:
             return
             
@@ -77,22 +83,24 @@ class ChatList(ListView):
         filter_func = self.FILTER_MAP.get(category, lambda _: True)
         term = search_term.lower()
         
-        first_visible_index: Optional[int] = None
+        first_visible: Optional[int] = None
 
         for index, item in enumerate(self.children):
             if not isinstance(item, ChatItem):
                 continue
             
-            item.display = filter_func(item.dialog.entity) and term in item.search_text
+            is_visible = filter_func(item.dialog.entity) and term in item.search_text
+            item.display = is_visible
             
-            if item.display and first_visible_index is None:
-                first_visible_index = index
+            if is_visible and first_visible is None:
+                first_visible = index
 
-        if first_visible_index is None:
+        if first_visible is None:
             self.index = None
         else:
-            if self.index is None or self.index >= len(self.children) or not self.children[self.index].display:
-                self.index = first_visible_index
+            current_item_visible = self.index is not None and self.index < len(self.children) and self.children[self.index].display
+            if not current_item_visible:
+                self.index = first_visible
             
             if self.index is not None:
                 self.scroll_to_item(self.children[self.index])

@@ -67,7 +67,9 @@ class ProfileScreen(Screen):
             
             details_widget = self.query_one("#profile-details", Static)
             
-            display_name = f"{getattr(user_entity, 'first_name', '') or ''} {getattr(user_entity, 'last_name', '') or ''}".strip()
+            first_name = getattr(user_entity, 'first_name', '') or ''
+            last_name = getattr(user_entity, 'last_name', '') or ''
+            display_name = f"{first_name} {last_name}".strip()
             username_label = f"@{user_entity.username}" if getattr(user_entity, 'username', None) else "None"
             phone_label = f"+{getattr(user_entity, 'phone', 'Unknown')}" if getattr(user_entity, 'phone', None) else "Private"
             user_biography = full_user_data.full_user.about or "No bio"

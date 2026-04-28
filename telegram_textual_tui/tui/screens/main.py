@@ -4,37 +4,39 @@ Provides a multi-column layout for chat selection and message history.
 """
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+import time
 
-from telethon import events
+from telethon import events, utils
 from telethon.tl.functions.channels import GetFullChannelRequest
-from telethon.tl.functions.messages import (
-    GetAvailableReactionsRequest,
-    GetFullChatRequest,
-    GetMessageReactionsListRequest,
-    GetRecentReactionsRequest,
-    SendReactionRequest,
-)
+from telethon.tl.functions.messages import GetFullChatRequest
 from telethon.tl.types import (
     Channel,
     Chat,
     ChatReactionsNone,
     ChatReactionsSome,
-    MessageReactions,
     ReactionEmoji,
     User,
 )
-from textual import on
+from rich.panel import Panel
+from rich.text import Text
+from textual import events as textual_events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Input, Label, ListView, RichLog, Tabs
 
 from telegram_textual_tui.tui.config.keymap import Keymap
+from telegram_textual_tui.tui.controllers.chat_controller import ChatController
 from telegram_textual_tui.tui.controllers.history_controller import HistoryController
+from telegram_textual_tui.tui.controllers.message_controller import MessageController
 from telegram_textual_tui.tui.screens.profile import ProfileScreen
 from telegram_textual_tui.tui.widgets.chat_list import ChatItem, ChatList
 from telegram_textual_tui.tui.widgets.chat_tabs import ChatTabs
-from telegram_textual_tui.utils.formatters import get_telegram_entity_title
+from telegram_textual_tui.utils.formatters import (
+    get_telegram_entity_title,
+    get_message_sender_id,
+    format_message_reactions,
+)
 
 if TYPE_CHECKING:
     from telegram_textual_tui.tui.app import TGTApp
@@ -53,17 +55,19 @@ class MainScreen(Screen):
         super().__init__(*args, **kwargs)
         self._selected_dialog_id = None
         self._selected_dialog_entity = None
+        self._me = None
         self._read_outbox_maximum_id = 0
         self._reaction_target_message_id = None
         self._last_received_message_id = None
         
-        # Pagination and caching state
         self._loaded_messages: List[Any] = []
         self._sender_cache: Dict[int, str] = {}
         self._is_loading_more = False
+        self._last_load_time = 0.0
 
-        # Controllers
         self._history_controller = HistoryController(self.app.telegram_manager)
+        self._message_controller = MessageController(self.app.telegram_manager)
+        self._chat_controller = ChatController(self.app.telegram_manager)
 
     BINDINGS = Keymap.MAIN_SCREEN
 
@@ -78,22 +82,16 @@ class MainScreen(Screen):
             self.query_one(ChatTabs).action_prev_tab()
 
     async def action_show_my_profile(self) -> None:
-        """
-        Switch to the current user's profile screen.
-        """
+        """Switch to the current user's profile screen."""
         self.app.push_screen(ProfileScreen())
 
     async def action_show_partner_profile(self) -> None:
-        """
-        Show the profile of the current chat partner if available.
-        """
+        """Show the profile of the current chat partner if available."""
         if isinstance(self._selected_dialog_entity, User):
             self.app.push_screen(ProfileScreen(user_id=self._selected_dialog_entity.id))
 
     async def action_react_to_last_message(self) -> None:
-        """
-        Open reaction selection for the most recently received message.
-        """
+        """Open reaction selection for the most recently received message."""
         if self._last_received_message_id:
             await self.action_send_reaction(self._last_received_message_id)
 
@@ -106,14 +104,17 @@ class MainScreen(Screen):
         self.query_one("#chat-list", ChatList).focus()
 
     async def action_focus_message_input(self) -> None:
-        """Move focus to the message input field."""
-        self.query_one("#message-input", Input).focus()
+        """Move focus to the message input field or messages log if input is disabled."""
+        input_widget = self.query_one("#message-input", Input)
+        if not input_widget.disabled:
+            input_widget.focus()
+        else:
+            self.query_one("#messages", RichLog).focus()
 
     async def action_scroll_messages_up(self) -> None:
-        """Scroll the message history log upwards and auto-load more if needed."""
+        """Scroll the message history log upwards and trigger pagination if at top."""
         messages_log = self.query_one("#messages", RichLog)
         messages_log.scroll_up()
-        
         if messages_log.scroll_offset.y <= 1:
             await self.action_load_more_history()
 
@@ -122,11 +123,16 @@ class MainScreen(Screen):
         self.query_one("#messages", RichLog).scroll_down()
 
     async def action_load_more_history(self) -> None:
-        """Fetch older messages and prepend them to the view."""
+        """Fetch older messages and prepend them to the view with debouncing."""
         if not self._selected_dialog_entity or self._is_loading_more or not self._loaded_messages:
+            return
+            
+        current_time = time.time()
+        if current_time - self._last_load_time < 1.5:
             return
 
         self._is_loading_more = True
+        self._last_load_time = current_time
         try:
             oldest_id = self._loaded_messages[0].id
             older_messages = await self._history_controller.get_messages(
@@ -142,94 +148,69 @@ class MainScreen(Screen):
             self._is_loading_more = False
 
     async def action_show_user_profile(self, user_id: int) -> None:
-        """
-        Switch to a user's profile based on their ID.
-        """
+        """Switch to a user's profile based on their ID."""
         if user_id:
             self.app.push_screen(ProfileScreen(user_id=user_id))
 
     async def action_show_reactions(self, message_id: int) -> None:
-        """
-        Fetch and display users who reacted to a specific message.
-        """
-        application_instance: TGTApp = self.app
+        """Fetch and display users who reacted to a specific message."""
         try:
-            reactions_list = await application_instance.telegram_manager.client(
-                GetMessageReactionsListRequest(
-                    peer=self._selected_dialog_entity, id=int(message_id), limit=100
-                )
+            users = await self._message_controller.get_message_reactions_users(
+                self._selected_dialog_entity, int(message_id)
             )
-            names = [get_telegram_entity_title(user) for user in reactions_list.users]
+            names = [get_telegram_entity_title(user) for user in users]
+            log = self.query_one("#messages", RichLog)
             if names:
-                self.query_one("#messages", RichLog).write(f"[yellow]Reacted by:[/yellow] {', '.join(names)}")
+                log.write(f"[yellow]Reacted by:[/yellow] {', '.join(names)}")
             else:
-                self.query_one("#messages", RichLog).write("[dim]No reaction details.[/dim]")
+                log.write("[dim]No reaction details.[/dim]")
         except Exception as error:
             self.query_one("#messages", RichLog).write(f"[red]Error: {error}[/red]")
 
     async def action_quick_react(self, message_id: int, emoticon: str) -> None:
-        """
-        Send a reaction to Telegram and refresh the message view.
-        """
-        application_instance: TGTApp = self.app
+        """Send a reaction to Telegram and refresh the message view."""
         try:
-            await application_instance.telegram_manager.client(
-                SendReactionRequest(
-                    peer=self._selected_dialog_entity,
-                    msg_id=int(message_id),
-                    reaction=[ReactionEmoji(emoticon=emoticon)],
-                )
+            await self._message_controller.send_reaction(
+                self._selected_dialog_entity, int(message_id), emoticon
             )
             chat_list = self.query_one(ChatList)
             if chat_list.index is not None:
-                await self._load_message_history(self._selected_dialog_entity, chat_list.children[chat_list.index])
+                await self._load_message_history(
+                    self._selected_dialog_entity, 
+                    chat_list.children[chat_list.index]
+                )
         except Exception as error:
             self.query_one("#messages", RichLog).write(f"[red]Failed to react: {error}[/red]")
 
     async def action_send_reaction(self, message_id: int) -> None:
-        """
-        Dynamically fetch available reactions from Telegram and display as clickable options.
-        """
+        """Dynamically fetch available reactions from Telegram and display as clickable options."""
         application_instance: TGTApp = self.app
         messages_log = self.query_one("#messages", RichLog)
 
-        allowed_emojis = []
-        
-        try:
-            available_reactions = await application_instance.telegram_manager.client(
-                GetAvailableReactionsRequest(hash=0)
-            )
-            if hasattr(available_reactions, "reactions"):
-                allowed_emojis = [
-                    r.reaction.emoticon for r in available_reactions.reactions 
-                    if isinstance(r.reaction, ReactionEmoji)
-                ]
-        except Exception:
-            pass
-
+        allowed_emojis = await self._message_controller.get_available_reactions()
         if not allowed_emojis:
-            try:
-                recent_reactions = await application_instance.telegram_manager.client(
-                    GetRecentReactionsRequest(hash=0, limit=20)
-                )
-                if hasattr(recent_reactions, "reactions"):
-                    allowed_emojis = [r.emoticon for r in recent_reactions.reactions if isinstance(r, ReactionEmoji)]
-            except Exception:
-                pass
+            allowed_emojis = await self._message_controller.get_recent_reactions()
 
         if isinstance(self._selected_dialog_entity, (Chat, Channel)):
             try:
                 if isinstance(self._selected_dialog_entity, Channel):
-                    full = await application_instance.telegram_manager.client(GetFullChannelRequest(self._selected_dialog_entity))
+                    full = await application_instance.telegram_manager.client(
+                        GetFullChannelRequest(self._selected_dialog_entity)
+                    )
                 else:
-                    full = await application_instance.telegram_manager.client(GetFullChatRequest(self._selected_dialog_id))
+                    full = await application_instance.telegram_manager.client(
+                        GetFullChatRequest(self._selected_dialog_id)
+                    )
                 
                 settings = full.full_chat.available_reactions
                 if isinstance(settings, ChatReactionsNone):
                     messages_log.write("[red]Reactions are disabled here.[/red]")
                     return
                 elif isinstance(settings, ChatReactionsSome):
-                    allowed_emojis = [r.emoticon for r in settings.reactions if isinstance(r, ReactionEmoji)]
+                    allowed_emojis = [
+                        r.emoticon for r in settings.reactions 
+                        if isinstance(r, ReactionEmoji)
+                    ]
             except Exception:
                 pass
 
@@ -246,10 +227,9 @@ class MainScreen(Screen):
 
     async def action_reload_all_dialogs(self) -> None:
         """Update the sidebar with the latest 100 dialogs."""
-        application_instance: TGTApp = self.app
         chat_list = self.query_one(ChatList)
         chat_list.clear()
-        dialogs = await application_instance.telegram_manager.client.get_dialogs(limit=100)
+        dialogs = await self._chat_controller.fetch_dialogs(limit=100)
         for dialog in dialogs:
             await chat_list.append(ChatItem(dialog))
         self._sync_chat_filter()
@@ -267,14 +247,40 @@ class MainScreen(Screen):
 
     async def on_mount(self) -> None:
         """Initialize event handlers and load initial data."""
-        self.query_one("#messages", RichLog).write("[dim]Select a chat to begin...[/dim]")
+        messages_log = self.query_one("#messages", RichLog)
+        messages_log.can_focus = True
+        messages_log.write("[dim]Select a chat to begin...[/dim]")
         
         application_instance: TGTApp = self.app
         if application_instance.telegram_manager:
+            self._me = await application_instance.telegram_manager.get_authenticated_user_details()
+            if self._me:
+                self._sender_cache[self._me.id] = get_telegram_entity_title(self._me)
+
             application_instance.telegram_manager.client.add_event_handler(
                 self._handle_incoming_new_message, events.NewMessage
             )
+            application_instance.telegram_manager.client.add_event_handler(
+                self._handle_message_read, events.MessageRead
+            )
+            
+            self.set_interval(5.0, self._poll_read_status)
             await self.action_reload_all_dialogs()
+
+    async def _poll_read_status(self) -> None:
+        """Periodically check for read status updates to ensure UI consistency."""
+        if not self._selected_dialog_entity or not self._selected_dialog_id:
+            return
+
+        new_max_id = await self._chat_controller.get_read_outbox_max_id(self._selected_dialog_entity)
+        if new_max_id > self._read_outbox_maximum_id:
+            self._read_outbox_maximum_id = new_max_id
+            await self._render_messages()
+            chat_list = self.query_one(ChatList)
+            for item in chat_list.children:
+                if isinstance(item, ChatItem) and item.dialog.id == self._selected_dialog_id:
+                    item.dialog.read_outbox_max_id = new_max_id
+                    break
 
     async def on_unmount(self) -> None:
         """Cleanup event handlers."""
@@ -283,6 +289,34 @@ class MainScreen(Screen):
             application_instance.telegram_manager.client.remove_event_handler(
                 self._handle_incoming_new_message, events.NewMessage
             )
+            application_instance.telegram_manager.client.remove_event_handler(
+                self._handle_message_read, events.MessageRead
+            )
+
+    async def _handle_message_read(self, event: events.MessageRead.Event) -> None:
+        """Update read status indicators and chat list badges when messages are read."""
+        event_peer_id = utils.get_peer_id(event.peer)
+        
+        chat_list = self.query_one(ChatList)
+        for item in chat_list.children:
+            if isinstance(item, ChatItem) and item.dialog.id == event_peer_id:
+                if event.out:
+                    if event.max_id > getattr(item.dialog, "read_outbox_max_id", 0):
+                        item.dialog.read_outbox_max_id = event.max_id
+                else:
+                    item.dialog.unread_count = 0
+                    try:
+                        item.query_one(".chat-unread").remove()
+                    except Exception:
+                        pass
+                break
+
+        if self._selected_dialog_id == event_peer_id:
+            if event.out:
+                if event.max_id > self._read_outbox_maximum_id:
+                    self._read_outbox_maximum_id = event.max_id
+                    await self._render_messages()
+                    self.notify("Message read", severity="information", timeout=2)
 
     @on(Tabs.TabActivated)
     def on_tab_activated(self) -> None:
@@ -303,6 +337,13 @@ class MainScreen(Screen):
         if chat_list.index is not None:
             chat_list.focus()
 
+    async def on_key(self, event: textual_events.Key) -> None:
+        """Handle global key events for history loading triggers."""
+        if event.key in ("up", "pageup"):
+            messages_log = self.query_one("#messages", RichLog)
+            if messages_log.scroll_offset.y <= 1:
+                await self.action_load_more_history()
+
     def _sync_chat_filter(self) -> None:
         """Coordinate filtering between category tabs and search input."""
         try:
@@ -313,37 +354,20 @@ class MainScreen(Screen):
         except Exception:
             pass
 
-    def _format_message_reactions(self, message_id: int, data: Optional[MessageReactions]) -> str:
-        """Generate a clickable string of reactions for the log."""
-        if not data or not data.results:
-            return f" [@click=screen.send_reaction({message_id})][dim][React][/dim][/@click]"
-
-        parts = []
-        for result in data.results:
-            char = result.reaction.emoticon if isinstance(result.reaction, ReactionEmoji) else "C"
-            parts.append(f"{char}{result.count}")
-
-        return f" [@click=screen.show_reactions({message_id})][dim][{ ' '.join(parts) }][/dim][/@click] [@click=screen.send_reaction({message_id})][dim][+][/dim][/@click]"
-
     async def _handle_incoming_new_message(self, event: events.NewMessage.Event) -> None:
         """Process real-time messages and update the UI."""
-        application_instance: TGTApp = self.app
         chat_id = event.chat_id
         if self._selected_dialog_id == chat_id:
-            self._last_received_message_id = event.message.id
-            log = self.query_one("#messages", RichLog)
-            
-            sid = getattr(event.message, "sender_id", 0)
-            if sid not in self._sender_cache:
-                sender = await event.get_sender()
-                self._sender_cache[sid] = get_telegram_entity_title(sender)
-            
-            name = self._sender_cache[sid]
-            tick = " (v)" if event.out and isinstance(self._selected_dialog_entity, User) else ""
-            link = f"[@click=screen.show_user_profile({sid})][bold cyan]{name}[/bold cyan][/@click]"
-            log.write(f"{link}: {event.message.text or '[Media]'}{tick}")
+            if any(msg.id == event.message.id for msg in self._loaded_messages):
+                return
 
-            await application_instance.telegram_manager.client.send_read_acknowledge(event.input_chat)
+            self._last_received_message_id = event.message.id
+            self._loaded_messages.append(event.message)
+            await self._append_message_to_log(event.message)
+            await self._chat_controller.mark_as_read(event.input_chat)
+            return
+
+        if event.message.out:
             return
 
         chat_list = self.query_one(ChatList)
@@ -357,52 +381,101 @@ class MainScreen(Screen):
                     await item.mount(Label(str(item.dialog.unread_count), classes="chat-unread"))
                 break
 
+    async def _get_message_panel(self, msg: Any) -> Panel:
+        """Create a Rich Panel for a single message, utilizing cache for sender names."""
+        sid = get_message_sender_id(msg)
+        
+        if sid is None and msg.out and self._me:
+            sid = self._me.id
+        
+        if sid is not None and sid not in self._sender_cache:
+            try:
+                sender = await msg.get_sender()
+                self._sender_cache[sid] = get_telegram_entity_title(sender)
+            except Exception:
+                self._sender_cache[sid] = "Unknown"
+
+        name = self._sender_cache.get(sid, "Unknown")
+        timestamp = msg.date.strftime("%H:%M")
+        
+        status_dot = ""
+        if msg.out:
+            is_saved_messages = self._me and self._selected_dialog_id == self._me.id
+            is_read = is_saved_messages or (self._read_outbox_maximum_id > 0 and msg.id <= self._read_outbox_maximum_id)
+            dot_color = "bold purple" if is_read else "dim"
+            status_dot = f" [{dot_color}]•[/{dot_color}]"
+        
+        title = f"[bold cyan]{name}[/] [dim]• {timestamp}[/]"
+        subtitle = f"{status_dot}{format_message_reactions(msg.id, getattr(msg, 'reactions', None))}"
+        
+        return Panel(
+            Text.from_markup(msg.text or "[dim][Media][/dim]"),
+            title=Text.from_markup(title),
+            subtitle=Text.from_markup(subtitle),
+            title_align="left",
+            subtitle_align="right",
+            border_style="blue" if msg.out else "white",
+            padding=(0, 1),
+            expand=True
+        )
+
+    async def _append_message_to_log(self, msg: Any) -> None:
+        """Add a single message to the bottom of the log and scroll to it."""
+        log = self.query_one("#messages", RichLog)
+        panel = await self._get_message_panel(msg)
+        log.write(panel)
+        log.scroll_end()
+
     async def _render_messages(self) -> None:
         """Render all loaded messages to the log using an optimized cache-aware process."""
         log = self.query_one("#messages", RichLog)
         log.clear()
         
-        is_dm = isinstance(self._selected_dialog_entity, User)
-        
         for msg in self._loaded_messages:
-            sid = getattr(msg, "sender_id", 0)
-            
-            if sid not in self._sender_cache:
-                sender = await msg.get_sender()
-                self._sender_cache[sid] = get_telegram_entity_title(sender)
-
-            name = self._sender_cache[sid]
-            status = ""
-            if msg.out and is_dm:
-                status = " [blue]vv[/blue]" if msg.id <= self._read_outbox_maximum_id else " [dim]v[/dim]"
-            
-            reacts = self._format_message_reactions(msg.id, getattr(msg, "reactions", None))
-            link = f"[@click=screen.show_user_profile({sid})][bold cyan]{name}[/bold cyan][/@click]"
-            log.write(f"{link}: {msg.text or '[Media]'}{status}{reacts}")
+            panel = await self._get_message_panel(msg)
+            log.write(panel)
+        
+        log.scroll_end()
 
     async def _load_message_history(self, entity: Any, item: Optional[ChatItem] = None) -> None:
-        """Fetch and render initial message history for the selected peer."""
-        application_instance: TGTApp = self.app
-        self._selected_dialog_id = entity.id
+        """
+        Fetch and render initial message history for the selected peer.
+        """
+        self._selected_dialog_id = utils.get_peer_id(entity)
         self._selected_dialog_entity = entity
         
         self._loaded_messages = []
         self._sender_cache = {}
+        self._read_outbox_maximum_id = 0
+        
+        if self._me:
+            self._sender_cache[self._me.id] = get_telegram_entity_title(self._me)
 
-        dialog_data = getattr(item, "dialog", None)
-        self._read_outbox_maximum_id = getattr(dialog_data, "read_outbox_max_id", 0)
-        if self._read_outbox_maximum_id == 0 and hasattr(dialog_data, "dialog"):
-            self._read_outbox_maximum_id = getattr(dialog_data.dialog, "read_outbox_max_id", 0)
+        if item and hasattr(item.dialog, "read_outbox_max_id"):
+            self._read_outbox_maximum_id = item.dialog.read_outbox_max_id
+        else:
+            self._read_outbox_maximum_id = await self._chat_controller.get_read_outbox_max_id(entity)
 
-        try:
-            await application_instance.telegram_manager.client.send_read_acknowledge(entity)
-            if item:
-                try:
-                    item.query_one(".chat-unread").remove()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        log = self.query_one("#messages", RichLog)
+        log.clear()
+
+        can_send, placeholder = self._message_controller.get_messaging_status(entity)
+        input_widget = self.query_one("#message-input", Input)
+        input_widget.disabled = not can_send
+        input_widget.placeholder = placeholder
+        input_widget.value = ""
+
+        if can_send:
+            input_widget.focus()
+        else:
+            log.focus()
+
+        await self._chat_controller.mark_as_read(entity)
+        if item:
+            try:
+                item.query_one(".chat-unread").remove()
+            except Exception:
+                pass
 
         messages = await self._history_controller.get_messages(entity, limit=30)
         self._loaded_messages = list(reversed(messages))
@@ -415,14 +488,12 @@ class MainScreen(Screen):
     @on(ListView.Selected, "#chat-list")
     async def on_chat_list_item_selected(self, event: ListView.Selected) -> None:
         """Handle chat selection in the sidebar."""
-        if not isinstance(event.item, ChatItem):
-            return
-        await self._load_message_history(event.item.dialog.entity, event.item)
+        if isinstance(event.item, ChatItem):
+            await self._load_message_history(event.item.dialog.entity, event.item)
 
     @on(Input.Submitted, "#message-input")
     async def on_message_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle sending text or emojis."""
-        application_instance: TGTApp = self.app
+        """Handle sending text or emojis based on the current input context."""
         text = event.value.strip()
         if not text:
             return
@@ -431,14 +502,18 @@ class MainScreen(Screen):
             mid = self._reaction_target_message_id
             self._reaction_target_message_id = None
             try:
-                await application_instance.telegram_manager.client(SendReactionRequest(
-                    peer=self._selected_dialog_entity, msg_id=int(mid), reaction=[ReactionEmoji(emoticon=text)]
-                ))
+                await self._message_controller.send_reaction(
+                    self._selected_dialog_entity, int(mid), text
+                )
                 event.input.value = ""
                 event.input.placeholder = "Type a message..."
+                
                 chat_list = self.query_one(ChatList)
                 if chat_list.index is not None:
-                    await self._load_message_history(self._selected_dialog_entity, chat_list.children[chat_list.index])
+                    await self._load_message_history(
+                        self._selected_dialog_entity, 
+                        chat_list.children[chat_list.index]
+                    )
             except Exception as error:
                 self.query_one("#messages", RichLog).write(f"[red]Error: {error}[/red]")
             return
@@ -446,6 +521,9 @@ class MainScreen(Screen):
         chat_list = self.query_one(ChatList)
         item = chat_list.children[chat_list.index] if chat_list.index is not None else None
         if isinstance(item, ChatItem):
-            await application_instance.telegram_manager.client.send_message(entity=item.dialog.entity, message=text)
+            sent_msg = await self._message_controller.send_text(item.dialog.entity, text)
             event.input.value = ""
-            await self._load_message_history(item.dialog.entity, item)
+            
+            if self._selected_dialog_id is not None:
+                self._loaded_messages.append(sent_msg)
+                await self._append_message_to_log(sent_msg)
