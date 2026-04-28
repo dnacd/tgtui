@@ -6,14 +6,17 @@ dialog entry with a stylized ANSI avatar miniature, while ChatList manages
 the collection of items, providing filtering by category and search term.
 """
 
+import asyncio
+import random
 from typing import Any, Callable, Dict, Optional
 
 from telethon.tl.types import Channel, Chat, User
+from textual import message
 from textual.app import ComposeResult
 from textual.widgets import Label, ListItem, ListView
 
 from telegram_textual_tui.utils.formatters import get_telegram_entity_title
-from telegram_textual_tui.tui.widgets.ascii_image import AsciiImage
+from telegram_textual_tui.tui.widgets.ansi_image import AnsiImage
 
 
 class ChatItem(ListItem):
@@ -44,15 +47,27 @@ class ChatItem(ListItem):
         """
         Create the visual structure for the chat item using a horizontal layout.
         """
-        yield AsciiImage(id="chat-avatar", fallback_text=self.initials, classes="chat-avatar-mini")
+        yield AnsiImage(id="chat-avatar", image_data=None, fallback_text=self.initials, classes="chat-avatar-mini")
         yield Label(self.title_text, classes="chat-title", markup=False)
         if self.dialog.unread_count > 0:
             yield Label(str(self.dialog.unread_count), classes="chat-unread")
 
     def on_mount(self) -> None:
         """
-        Trigger avatar loading as soon as the item is attached to the DOM.
+        Check memory cache first to avoid background noise, otherwise spawn a worker.
         """
+        try:
+            telegram_manager = getattr(self.app, "telegram_manager", None)
+            if telegram_manager:
+                peer_id = self.dialog.entity.id
+                cache_key = f"{peer_id}_small"
+                if cache_key in telegram_manager.avatar_manager._memory_cache:
+                    ansi_data = telegram_manager.avatar_manager._memory_cache[cache_key]
+                    self.query_one("#chat-avatar", AnsiImage).update_image(ansi_data)
+                    return
+        except Exception:
+            pass
+
         self.run_worker(self._load_avatar())
 
     async def _load_avatar(self) -> None:
@@ -60,20 +75,28 @@ class ChatItem(ListItem):
         Fetch and apply the ANSI avatar art asynchronously.
         
         This worker method interacts with the AvatarManager to retrieve either 
-        a rendered photo or a generated identicon, ensuring the UI remains 
-        responsive during the process.
+        a rendered photo or a generated identicon. It preserves disk storage 
+        while leveraging memory caching for UI fluidity.
         """
         try:
-            avatar_manager = self.app.telegram_manager.avatar_manager
-            # AvatarManager is guaranteed to return an ANSI string (photo or identicon)
+            # Stagger loading slightly during initial batch rendering
+            await asyncio.sleep(random.uniform(0.01, 0.1))
+            
+            telegram_manager = getattr(self.app, "telegram_manager", None)
+            if not telegram_manager:
+                return
+
+            avatar_manager = telegram_manager.avatar_manager
             avatar_data = await avatar_manager.get_avatar(self.dialog.entity, size="small")
             
-            avatar_widget = self.query_one("#chat-avatar", AsciiImage)
-            avatar_widget.update_image(avatar_data)
+            avatar_widget = self.query_one("#chat-avatar", AnsiImage)
+            if avatar_data:
+                avatar_widget.update_image(avatar_data)
+            else:
+                avatar_widget.set_loading(False)
         except Exception:
-            # If everything fails, disable loading to reveal the fallback letter
             try:
-                self.query_one("#chat-avatar", AsciiImage).set_loading(False)
+                self.query_one("#chat-avatar", AnsiImage).set_loading(False)
             except Exception:
                 pass
 
@@ -83,6 +106,10 @@ class ChatList(ListView):
     A scrollable list of ChatItems with filtering capabilities.
     """
 
+    class ReachedBottom(message.Message):
+        """Sent when the list is scrolled near the bottom."""
+        pass
+
     # Mapping of filter keys to predicate functions for easy classification
     FILTER_MAP: Dict[str, Callable[[Any], bool]] = {
         "all": lambda _: True,
@@ -90,6 +117,21 @@ class ChatList(ListView):
         "groups": lambda entity: isinstance(entity, (Chat, Channel)),
         "bots": lambda entity: isinstance(entity, User) and entity.bot,
     }
+
+    def watch_scroll_offset(self) -> None:
+        """Monitor scroll position and notify when near the bottom."""
+        self._check_scroll_bottom()
+
+    def on_mount(self) -> None:
+        """Set up a periodic check for the scroll position to ensure reliability."""
+        self.set_interval(0.3, self._check_scroll_bottom)
+
+    def _check_scroll_bottom(self) -> None:
+        """Check if the list is scrolled near the bottom and trigger pagination."""
+        if self.virtual_size.height > 0:
+            # If we are within half a screen height of the bottom
+            if self.scroll_offset.y + self.size.height >= self.virtual_size.height - 5:
+                self.post_message(self.ReachedBottom())
 
     def action_cursor_down(self) -> None:
         """

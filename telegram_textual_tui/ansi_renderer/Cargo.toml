@@ -1,10 +1,10 @@
 [package]
-name = "ascii_render"
+name = "ansi_render"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "ascii_render_native"
+name = "ansi_render_native"
 crate-type = ["cdylib"]
 
 [dependencies]

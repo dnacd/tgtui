@@ -1,27 +1,47 @@
-# tgt (Telegram Textual TUI)
+# TGT (Telegram Textual TUI)
 
-A local-first Telegram terminal client built with [Textual](https://textual.textualize.io/) and [Telethon](https://docs.telethon.dev/).
+TGT is a local-first Telegram client for people who love the terminal aesthetic. It's not just a CLI wrapper; it's a cozy, high-fidelity space for your chats, inspired by the gritty feel of old-school computer interfaces and the sleek chat terminal from **Warframe** :D
+  
+I built this because I wanted a Telegram client that feels like a piece of hardware from a sci-fi movie—fast, keyboard-driven, and visually alive.
 
-## Status
+## The Vibe
 
-**Early MVP.**
+- **Truecolor ANSI Magic**: We use a native Rust engine to turn profile photos into high-res ANSI art. It's not just ASCII; it's full-color terminal painting.
+- **Sci-Fi Identicons**: No profile photo? No problem. TGT generates unique, symmetric geometric patterns for every user, so everyone has a distinct visual identity that fits the aesthetic.
+- **Keyboard-First Flow**: Forget the mouse. Everything is mapped to your fingers, making it feel like you're actually "operating" a terminal.
+- **Fast & Lightweight**: It's built with Python Textual and Rust, designed to be snappy and stay out of your way. No web-view bloat here.
 
-Currently supported:
-- Unified CLI (`tgt`)
-- Secure local login
-- Dialog list (chats, groups, channels)
-- Basic message viewing
-- Search in chats
-- Media placeholders
+## What's under the hood?
 
-## Security & Privacy
+- **MTProto Power**: Connects directly to Telegram via Telethon.
+- **Native Rust Renderer**: A custom-built library (PyO3) that handles the heavy lifting of image processing and ANSI encoding.
+- **Smart Caching**: Avatars and assets are cached locally, so they load instantly after the first time.
+- **Private by Design**: Your keys and sessions stay on your machine. Period.
 
-- **Local-first**: All data stays on your machine.
-- **Direct Connection**: Connects directly to Telegram via Telethon.
-- **No Telemetry**: No analytics or tracking.
-- **No Backend**: Your data is never sent to our servers.
+## Getting Around (Keyboard Only)
+
+### Moving the Focus
+- **Tab / Shift+Tab**: Cycle through everything.
+- **Ctrl+L**: Jump straight to the chat list.
+- **Ctrl+S**: Jump to search.
+- **Esc**: Go back or focus the message input.
+
+### Chatting
+- **Arrows**: Navigate the list.
+- **Enter**: Open a chat.
+- **PageUp / PageDown**: Scroll through history.
+- **r**: Send a quick reaction to the last message.
+- **l**: Force refresh the chat list.
+
+### Profiles & Screens
+- **p**: Look at your own profile.
+- **u**: See who you're talking to.
+- **b**: Back to the terminal.
+- **Ctrl+Q**: Shut it down.
 
 ## Installation
+
+The installation scripts handle the Rust compilation and dependency injection for you.
 
 ### Linux / macOS
 ```bash
@@ -37,52 +57,11 @@ git clone https://github.com/dnacd/tgtui.git
 cd tgtui
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
+*Note: Make sure you have [Rust](https://rustup.rs/) installed so we can build the ANSI engine.*
 
-## Getting Started
+## Quick Start
 
-1. **Initialize**:
-   ```bash
-   tgt init
-   ```
-   This will open `my.telegram.org` and help you set up your API credentials.
-
-2. **Login**:
-   ```bash
-   tgt login
-   ```
-
-3. **Run TUI**:
-   ```bash
-   tgt tui
-   ```
-
-## Keyboard Shortcuts (Keyboard-Only Mode)
-
-The application is designed to be fully navigable via keyboard.
-
-### Global
-- `Ctrl+Q` : Quit application
-
-### Navigation & Focus
-- `Ctrl+L` : Focus Chat List
-- `Ctrl+I` or `Esc` : Focus Message Input
-- `PageUp` / `PageDown` : Scroll messages
-- `p` : Show My Profile
-- `u` : Show Partner's Profile (when in chat)
-- `b` or `Esc` : Back (from Profile screens)
-
-### Search
-- `/` or `Ctrl+S` : Focus Search bar
-
-### Actions
-- `r` : React to the last message in current chat
-- `l` : Reload all dialogs (refresh chat list)
-
-## Commands
-
-- `tgt init` - Setup API ID and API Hash
-- `tgt login` - Authenticate with Telegram
-- `tgt tui` - Launch the terminal interface
-- `tgt session` - Show session file path
-- `tgt logout` - Logout and remove session
-- `tgt doctor` - Run system diagnostics
+1. `tgt init` — Set up your API credentials (from my.telegram.org).
+2. `tgt login` — Sign in to Telegram.
+3. `tgt clean` — Clear the local avatar cache and logs.
+4. `tgt tui` — Enter the terminal.

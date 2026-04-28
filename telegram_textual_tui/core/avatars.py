@@ -22,9 +22,9 @@ from telethon.tl.types import User, Chat, Channel
 from telegram_textual_tui.core.config import APPLICATION_DIRECTORY, AVATAR_CACHE_DIRECTORY
 
 try:
-    import ascii_render_native
+    import ansi_render_native
 except ImportError:
-    ascii_render_native = None
+    ansi_render_native = None
 
 logger = logging.getLogger("AvatarManager")
 
@@ -53,8 +53,12 @@ class AvatarManager:
         self.client = client
         self.cache_dir = AVATAR_CACHE_DIRECTORY
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        # In-memory cache to avoid redundant disk I/O
+        self._memory_cache: Dict[str, str] = {}
         # Strictly serialize rendering tasks to minimize CPU impact
         self._render_semaphore = asyncio.Semaphore(1)
+        # Limit concurrent network downloads to prevent network storm
+        self._download_semaphore = asyncio.Semaphore(3)
         
         self._setup_logging()
 
@@ -100,25 +104,34 @@ class AvatarManager:
         Returns:
             A string containing ANSI escape sequences for truecolor art.
         """
-        peer_id = peer.id
-        cache_path = self._get_cache_path(peer_id, size)
+        if not peer:
+            return self._generate_identicon(0, size == "large")
 
-        if cache_path.exists():
-            return cache_path.read_text(encoding="utf-8")
-
-        temp_photo = self.cache_dir / f"temp_{peer_id}.jpg"
         try:
-            path = await self.client.download_profile_photo(peer, file=str(temp_photo))
+            peer_id = peer.id
+            cache_key = f"{peer_id}_{size}"
             
-            # If we have a photo AND the native renderer is available, use it
-            if path and ascii_render_native:
-                original_bytes = temp_photo.read_bytes()
+            if cache_key in self._memory_cache:
+                return self._memory_cache[cache_key]
+
+            cache_path = self._get_cache_path(peer_id, size)
+            loop = asyncio.get_running_loop()
+
+            if await loop.run_in_executor(None, cache_path.exists):
+                ansi_data = await loop.run_in_executor(None, cache_path.read_text, "utf-8")
+                self._memory_cache[cache_key] = ansi_data
+                return ansi_data
+
+            temp_photo = self.cache_dir / f"temp_{peer_id}.jpg"
+            
+            async with self._download_semaphore:
+                path = await self.client.download_profile_photo(peer, file=str(temp_photo))
+            
+            if path and ansi_render_native:
+                original_bytes = await loop.run_in_executor(None, temp_photo.read_bytes)
                 cols = 50 if size == "large" else 16
                 
                 async with self._render_semaphore:
-                    # Brief pause to keep the event loop responsive during batch jobs
-                    await asyncio.sleep(0.1)
-                    loop = asyncio.get_running_loop()
                     rendered_text = await loop.run_in_executor(
                         None,
                         self._render_to_ansi_sync, 
@@ -127,21 +140,26 @@ class AvatarManager:
                     )
                 
                 if rendered_text:
-                    cache_path.write_text(rendered_text, encoding="utf-8")
+                    await loop.run_in_executor(None, lambda: cache_path.write_text(rendered_text, encoding="utf-8"))
+                    self._memory_cache[cache_key] = rendered_text
                     return rendered_text
             
-            # Fallback to identicon if no photo or renderer failed/unavailable
             identicon = self._generate_identicon(peer_id, size == "large")
-            cache_path.write_text(identicon, encoding="utf-8")
+            await loop.run_in_executor(None, lambda: cache_path.write_text(identicon, encoding="utf-8"))
+            self._memory_cache[cache_key] = identicon
             return identicon
 
         except Exception as e:
-            logger.error(f"Failed to process avatar for {peer_id}: {e}")
-            # Reliable absolute fallback
-            return self._generate_identicon(peer_id, size == "large")
+            logger.error(f"Failed to process avatar: {e}")
+            fallback_id = getattr(peer, "id", 0) if peer else 0
+            return self._generate_identicon(fallback_id, size == "large")
         finally:
-            if temp_photo.exists():
-                temp_photo.unlink()
+            try:
+                temp_photo_path = self.cache_dir / f"temp_{getattr(peer, 'id', '0')}.jpg"
+                if temp_photo_path.exists():
+                    temp_photo_path.unlink()
+            except Exception:
+                pass
 
     def _generate_identicon(self, peer_id: int, is_large: bool) -> str:
         """
@@ -175,19 +193,23 @@ class AvatarManager:
         grid = [[rng.choice([True, False, False]) for _ in range(grid_size)] for _ in range(grid_size * 2)]
         
         output = []
-        scale_x = width // (grid_size * 2)
-        scale_y = height_pixels // (grid_size * 2)
 
         def get_pixel(px: int, py: int) -> Tuple[int, int, int]:
-            gx = px // scale_x
-            py_grid = py // scale_y
-            # Mirror horizontally
+            nx = px / width
+            ny = py / height_pixels
+            
+            gx = int(nx * grid_size * 2)
+            gy = int(ny * grid_size * 2)
+            
+            gx = min(gx, grid_size * 2 - 1)
+            gy = min(gy, grid_size * 2 - 1)
+            
             if gx >= grid_size:
                 gx = (grid_size * 2 - 1) - gx
             
-            if gx < grid_size and py_grid < (grid_size * 2) and grid[py_grid][gx]:
+            if grid[gy][gx]:
                 return (r, g, b)
-            return (30, 30, 30) # Soft dark background
+            return (30, 30, 30)
 
         for y in range(0, height_pixels, 2):
             line = []
@@ -213,11 +235,11 @@ class AvatarManager:
         Returns:
             An ANSI truecolor string representing the rendered art.
         """
-        if not ascii_render_native:
+        if not ansi_render_native:
             return ""
         
         try:
-            return ascii_render_native.render_to_ansi(
+            return ansi_render_native.render_to_ansi(
                 data=data,
                 cols=cols,
                 bright=1.1,

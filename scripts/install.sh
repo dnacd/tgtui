@@ -42,8 +42,9 @@ echo "Building and injecting Rust module..."
 pipx inject telegram-textual-tui maturin --force
 
 # Build and install the rust tool into the same venv
-pushd "$PROJECT_ROOT/telegram_textual_tui/ascii_tool" > /dev/null
+pushd "$PROJECT_ROOT/telegram_textual_tui/ansi_renderer" > /dev/null
 pipx runpip telegram-textual-tui install .
+rm -rf target
 popd > /dev/null
 
 echo "---------------------------------------"

@@ -86,10 +86,11 @@ class TGTApp(App):
     
     ChatItem {
         layout: horizontal;
-        height: 5;
+        height: 4;
         padding: 0 1;
-        margin: 0 1;
+        margin: 1 0 0 0;
         border: none;
+        content-align: left middle;
     }
     
     ChatItem:hover {
@@ -101,6 +102,10 @@ class TGTApp(App):
         color: $text;
         text-style: bold;
     }
+
+    AnsiImage {
+        content-align: center middle;
+    }
     
     .chat-avatar-mini {
         width: 16;
@@ -110,19 +115,25 @@ class TGTApp(App):
     
     .chat-title {
         width: 1fr;
-        height: 1;
+        height: 100%;
         content-align: left middle;
-        margin-top: 1;
     }
     
     .chat-unread {
         width: auto;
         min-width: 3;
+        height: 100%;
         background: $accent;
         color: $text;
-        text-align: center;
+        content-align: center middle;
         text-style: bold;
-        margin-top: 1;
+    }
+
+    #message-input {
+        width: 100%;
+        margin: 0;
+        border: none;
+        background: $boost;
     }
     """
 
@@ -148,9 +159,9 @@ class TGTApp(App):
         This method checks for an active session and authenticates the user.
         If no session is found, it redirects the user to the Login screen.
         """
-        from telegram_textual_tui.core.avatars import ascii_render_native
-        if ascii_render_native is None:
-            self.notify("ASCII Render module not loaded!", severity="error")
+        from telegram_textual_tui.core.avatars import ansi_render_native
+        if ansi_render_native is None:
+            self.notify("ANSI Render module not loaded!", severity="error")
 
         if not self.telegram_manager:
             await self.push_screen(LoginScreen())
