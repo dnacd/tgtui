@@ -30,6 +30,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Input, Label, ListView, RichLog, Tabs
 
+from telegram_textual_tui.tui.controllers.message_controller import MessageController
 from telegram_textual_tui.tui.screens.profile import ProfileScreen
 from telegram_textual_tui.tui.widgets.chat_list import ChatItem, ChatList
 from telegram_textual_tui.tui.widgets.chat_tabs import ChatTabs
@@ -45,9 +46,9 @@ class MainScreen(Screen):
     Supports full keyboard navigation and dynamic reaction handling.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         """
-        Initialize the main screen state variables.
+        Initialize the main screen state variables and controllers.
         """
         super().__init__(*args, **kwargs)
         self._selected_dialog_id = None
@@ -55,6 +56,9 @@ class MainScreen(Screen):
         self._read_outbox_maximum_id = 0
         self._reaction_target_message_id = None
         self._last_received_message_id = None
+
+        # Controllers
+        self._message_controller = MessageController(self.app.telegram_manager)
 
     BINDINGS = [
         Binding("/", "focus_search", "Search"),
@@ -69,17 +73,21 @@ class MainScreen(Screen):
         Binding("l", "reload_all_dialogs", "Reload"),
         Binding("pageup", "scroll_messages_up", "Scroll Up", show=False),
         Binding("pagedown", "scroll_messages_down", "Scroll Down", show=False),
-        Binding("[", "prev_tab", "Previous Tab", show=False),
-        Binding("]", "next_tab", "Next Tab", show=False),
+        Binding("[", "prev_tab", "Previous Tab", show=False, priority=True),
+        Binding("]", "next_tab", "Next Tab", show=False, priority=True),
+        Binding("х", "prev_tab", "Previous Tab (RU)", show=False, priority=True),
+        Binding("ъ", "next_tab", "Next Tab (RU)", show=False, priority=True),
     ]
 
     async def action_next_tab(self) -> None:
-        """Switch to the next chat category tab."""
-        self.query_one(ChatTabs).action_next_tab()
+        """Switch to the next chat category tab if not typing."""
+        if not isinstance(self.focused, Input):
+            self.query_one(ChatTabs).action_next_tab()
 
     async def action_prev_tab(self) -> None:
-        """Switch to the previous chat category tab."""
-        self.query_one(ChatTabs).action_prev_tab()
+        """Switch to the previous chat category tab if not typing."""
+        if not isinstance(self.focused, Input):
+            self.query_one(ChatTabs).action_prev_tab()
 
     async def action_show_my_profile(self) -> None:
         """
@@ -263,6 +271,41 @@ class MainScreen(Screen):
                 self._handle_incoming_new_message, events.NewMessage
             )
 
+    @on(Tabs.TabActivated)
+    def on_tab_activated(self) -> None:
+        """Handle chat category tab switching."""
+        self._sync_chat_filter()
+        if not isinstance(self.focused, Input):
+            self.query_one(ChatList).focus()
+
+    @on(Input.Changed, "#chat-search")
+    def on_search_filter_changed(self) -> None:
+        """Filter the chat list sidebar based on search term."""
+        self._sync_chat_filter()
+
+    @on(Input.Submitted, "#chat-search")
+    def on_search_submitted(self) -> None:
+        """
+        Handle search submission by focusing the chat list.
+        Allows for immediate keyboard navigation after search.
+        """
+        chat_list = self.query_one(ChatList)
+        if chat_list.index is not None:
+            chat_list.focus()
+
+    def _sync_chat_filter(self) -> None:
+        """
+        Coordinate filtering between category tabs and search input.
+        """
+        try:
+            search_term = self.query_one("#chat-search", Input).value
+            active_tab = self.query_one(ChatTabs).active_tab
+            category = active_tab.id if active_tab else "all"
+            self.query_one(ChatList).apply_filter(category, search_term)
+        except Exception:
+            # Handle cases where widgets might not be mounted yet
+            pass
+
     def _format_message_reactions(self, message_id: int, data: Optional[MessageReactions]) -> str:
         """Generate a clickable string of reactions for the log."""
         if not data or not data.results:
@@ -304,39 +347,6 @@ class MainScreen(Screen):
                     await item.mount(Label(str(item.dialog.unread_count), classes="chat-unread"))
                 break
 
-    @on(Tabs.TabActivated)
-    def on_tab_activated(self) -> None:
-        """Handle chat category tab switching."""
-        self._sync_chat_filter()
-
-    @on(Input.Changed, "#chat-search")
-    def on_search_filter_changed(self) -> None:
-        """Filter the chat list sidebar based on search term."""
-        self._sync_chat_filter()
-
-    @on(Input.Submitted, "#chat-search")
-    def on_search_submitted(self) -> None:
-        """
-        Handle search submission by focusing the chat list.
-        Allows for immediate keyboard navigation after search.
-        """
-        chat_list = self.query_one(ChatList)
-        if chat_list.index is not None:
-            chat_list.focus()
-
-    def _sync_chat_filter(self) -> None:
-        """
-        Coordinate filtering between category tabs and search input.
-        """
-        try:
-            search_term = self.query_one("#chat-search", Input).value
-            active_tab = self.query_one(ChatTabs).active_tab
-            category = active_tab.id if active_tab else "all"
-            self.query_one(ChatList).apply_filter(category, search_term)
-        except Exception:
-            # Handle cases where widgets might not be mounted yet
-            pass
-
     async def _load_message_history(self, entity: Any, item: Optional[ChatItem] = None) -> None:
         """Fetch and render message history for the selected peer."""
         application_instance: TGTApp = self.app
@@ -351,6 +361,12 @@ class MainScreen(Screen):
         log = self.query_one("#messages", RichLog)
         log.clear()
 
+        can_send, placeholder = self._message_controller.get_messaging_status(entity)
+        input_widget = self.query_one("#message-input", Input)
+        input_widget.disabled = not can_send
+        input_widget.placeholder = placeholder
+        input_widget.value = ""
+
         try:
             await application_instance.telegram_manager.client.send_read_acknowledge(entity)
             if item:
@@ -361,9 +377,7 @@ class MainScreen(Screen):
         except Exception:
             pass
 
-        messages_list = []
-        async for msg in application_instance.telegram_manager.client.iter_messages(entity, limit=20):
-            messages_list.append(msg)
+        messages_list = await self._message_controller.fetch_history(entity, limit=20)
 
         if messages_list:
             self._last_received_message_id = messages_list[0].id
@@ -392,12 +406,12 @@ class MainScreen(Screen):
     @on(Input.Submitted, "#message-input")
     async def on_message_input_submitted(self, event: Input.Submitted) -> None:
         """Handle sending text or emojis."""
-        application_instance: TGTApp = self.app
         text = event.value.strip()
         if not text:
             return
 
         if self._reaction_target_message_id is not None:
+            application_instance: TGTApp = self.app
             mid = self._reaction_target_message_id
             self._reaction_target_message_id = None
             try:
@@ -413,6 +427,6 @@ class MainScreen(Screen):
 
         item = self.query_one(ChatList).highlighted_child
         if isinstance(item, ChatItem):
-            await application_instance.telegram_manager.client.send_message(entity=item.dialog.entity, message=text)
+            await self._message_controller.send_text(item.dialog.entity, text)
             event.input.value = ""
             await self._load_message_history(item.dialog.entity, item)

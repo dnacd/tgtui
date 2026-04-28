@@ -49,6 +49,30 @@ class ChatList(ListView):
         "bots": lambda entity: isinstance(entity, User) and entity.bot,
     }
 
+    def action_cursor_down(self) -> None:
+        """Move cursor to the next visible item."""
+        if self.index is None:
+            return
+            
+        next_index = self.index + 1
+        while next_index < len(self.children):
+            if self.children[next_index].display:
+                self.index = next_index
+                return
+            next_index += 1
+
+    def action_cursor_up(self) -> None:
+        """Move cursor to the previous visible item."""
+        if self.index is None:
+            return
+            
+        prev_index = self.index - 1
+        while prev_index >= 0:
+            if self.children[prev_index].display:
+                self.index = prev_index
+                return
+            prev_index -= 1
+
     def apply_filter(self, category: str, search_term: str) -> None:
         """
         Filter the list items based on the active category and search term.
@@ -71,8 +95,12 @@ class ChatList(ListView):
             if item.display and first_visible_index is None:
                 first_visible_index = index
 
-        # Ensure index always points to a visible item
         if first_visible_index is None:
             self.index = None
-        elif self.index is None or not self.children[self.index].display:
-            self.index = first_visible_index
+        else:
+            if self.index is None or self.index >= len(self.children) or not self.children[self.index].display:
+                self.index = first_visible_index
+            if self.index is not None:
+                self.scroll_to_item(self.children[self.index])
+
+        self.refresh(layout=True)
