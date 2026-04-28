@@ -6,7 +6,7 @@ Provides a multi-column layout for chat selection and message history.
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import time
 
-from telethon import events
+from telethon import events, utils
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.functions.messages import GetFullChatRequest
 from telethon.tl.types import (
@@ -53,6 +53,7 @@ class MainScreen(Screen):
         super().__init__(*args, **kwargs)
         self._selected_dialog_id = None
         self._selected_dialog_entity = None
+        self._me = None
         self._read_outbox_maximum_id = 0
         self._reaction_target_message_id = None
         self._last_received_message_id = None
@@ -272,6 +273,11 @@ class MainScreen(Screen):
         
         application_instance: TGTApp = self.app
         if application_instance.telegram_manager:
+            # Cache the current user
+            self._me = await application_instance.telegram_manager.get_authenticated_user_details()
+            if self._me:
+                self._sender_cache[self._me.id] = get_telegram_entity_title(self._me)
+
             application_instance.telegram_manager.client.add_event_handler(
                 self._handle_incoming_new_message, events.NewMessage
             )
@@ -337,13 +343,20 @@ class MainScreen(Screen):
         """Process real-time messages and update the UI."""
         chat_id = event.chat_id
         if self._selected_dialog_id == chat_id:
+            # Check for existing message to avoid double-rendering if we added it manually
+            if any(msg.id == event.message.id for msg in self._loaded_messages):
+                return
+
             self._last_received_message_id = event.message.id
             
-            # Store in history and re-render
+            # Store in history and append to UI
             self._loaded_messages.append(event.message)
-            await self._render_messages()
+            await self._append_message_to_log(event.message)
 
             await self._chat_controller.mark_as_read(event.input_chat)
+            return
+
+        if event.message.out:
             return
 
         chat_list = self.query_one(ChatList)
@@ -357,51 +370,84 @@ class MainScreen(Screen):
                     await item.mount(Label(str(item.dialog.unread_count), classes="chat-unread"))
                 break
 
+    async def _get_message_panel(self, msg: Any) -> Panel:
+        """Create a Rich Panel for a single message, utilizing cache for sender names."""
+        sid = getattr(msg, "sender_id", None)
+        if sid is None and hasattr(msg, "from_id") and msg.from_id is not None:
+             try:
+                 sid = utils.get_peer_id(msg.from_id)
+             except Exception:
+                 pass
+        
+        if sid is None and msg.out and self._me:
+            sid = self._me.id
+        
+        if sid not in self._sender_cache:
+            
+            if sid in self._sender_cache:
+                pass
+            else:
+                try:
+                    sender = await msg.get_sender()
+                    if sender:
+                        self._sender_cache[sid] = get_telegram_entity_title(sender)
+                    else:
+                        self._sender_cache[sid] = "Unknown"
+                except Exception:
+                    self._sender_cache[sid] = "Unknown"
+
+        name = self._sender_cache.get(sid, "Unknown")
+        timestamp = msg.date.strftime("%H:%M")
+        
+        status_dot = ""
+        if msg.out:
+            is_read = msg.id <= self._read_outbox_maximum_id
+            dot_color = "bold purple" if is_read else "dim"
+            status_dot = f" [{dot_color}]•[/{dot_color}]"
+        
+        title = f"[bold cyan]{name}[/] [dim]• {timestamp}[/]"
+        subtitle = f"{status_dot}{self._format_message_reactions(msg.id, getattr(msg, 'reactions', None))}"
+        border_style = "blue" if msg.out else "white"
+        
+        return Panel(
+            Text.from_markup(msg.text or "[dim][Media][/dim]"),
+            title=Text.from_markup(title),
+            subtitle=Text.from_markup(subtitle),
+            title_align="left",
+            subtitle_align="right",
+            border_style=border_style,
+            padding=(0, 1),
+            expand=True
+        )
+
+    async def _append_message_to_log(self, msg: Any) -> None:
+        """Add a single message to the bottom of the log and scroll to it."""
+        log = self.query_one("#messages", RichLog)
+        panel = await self._get_message_panel(msg)
+        log.write(panel)
+        log.scroll_end()
+
     async def _render_messages(self) -> None:
         """Render all loaded messages to the log using an optimized cache-aware process."""
         log = self.query_one("#messages", RichLog)
         log.clear()
         
         for msg in self._loaded_messages:
-            sid = getattr(msg, "sender_id", 0)
-            
-            if sid not in self._sender_cache:
-                sender = await msg.get_sender()
-                self._sender_cache[sid] = get_telegram_entity_title(sender)
-
-            name = self._sender_cache[sid]
-            timestamp = msg.date.strftime("%H:%M")
-            
-            status_dot = ""
-            if msg.out:
-                is_read = msg.id <= self._read_outbox_maximum_id
-                dot_color = "bold purple" if is_read else "dim"
-                status_dot = f" [{dot_color}]•[/{dot_color}]"
-            
-            title = f"[bold cyan]{name}[/] [dim]• {timestamp}[/]"
-            subtitle = f"{status_dot}{self._format_message_reactions(msg.id, getattr(msg, 'reactions', None))}"
-            border_style = "blue" if msg.out else "white"
-            
-            panel = Panel(
-                Text.from_markup(msg.text or "[dim][Media][/dim]"),
-                title=Text.from_markup(title),
-                subtitle=Text.from_markup(subtitle),
-                title_align="left",
-                subtitle_align="right",
-                border_style=border_style,
-                padding=(0, 1),
-                expand=True
-            )
+            panel = await self._get_message_panel(msg)
             log.write(panel)
+        
+        log.scroll_end()
 
     async def _load_message_history(self, entity: Any, item: Optional[ChatItem] = None) -> None:
         """Fetch and render initial message history for the selected peer."""
-        self._selected_dialog_id = entity.id
+        self._selected_dialog_id = utils.get_peer_id(entity)
         self._selected_dialog_entity = entity
         
         # Reset state
         self._loaded_messages = []
         self._sender_cache = {}
+        if self._me:
+            self._sender_cache[self._me.id] = get_telegram_entity_title(self._me)
 
         # Fetch fresh read status
         self._read_outbox_maximum_id = await self._chat_controller.get_read_outbox_max_id(entity)
@@ -477,5 +523,10 @@ class MainScreen(Screen):
         chat_list = self.query_one(ChatList)
         item = chat_list.children[chat_list.index] if chat_list.index is not None else None
         if isinstance(item, ChatItem):
-            await self._message_controller.send_text(item.dialog.entity, text)
+            sent_msg = await self._message_controller.send_text(item.dialog.entity, text)
             event.input.value = ""
+            
+            # Immediately add to internal state and UI log
+            if self._selected_dialog_id is not None:
+                self._loaded_messages.append(sent_msg)
+                await self._append_message_to_log(sent_msg)

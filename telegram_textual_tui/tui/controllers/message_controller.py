@@ -39,11 +39,11 @@ class MessageController:
         
         return True, "Type a message..."
 
-    async def send_text(self, entity: Any, text: str) -> None:
+    async def send_text(self, entity: Any, text: str) -> Any:
         """
         Send a plain text message to the target entity.
         """
-        await self._manager.client.send_message(entity=entity, message=text)
+        return await self._manager.client.send_message(entity=entity, message=text)
 
     async def send_reaction(self, entity: Any, message_id: int, emoticon: str) -> None:
         """
