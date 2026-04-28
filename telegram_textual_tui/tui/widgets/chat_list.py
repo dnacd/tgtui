@@ -18,17 +18,15 @@ class ChatItem(ListItem):
 
     def __init__(self, dialog: Any) -> None:
         """
-        Initialize a chat list item.
+        Initialize a chat list item with dialog data and avatar styling.
         """
         super().__init__()
         self.dialog = dialog
         self.title_text = get_telegram_entity_title(self.dialog.entity)
         self.search_text = self.title_text.lower()
         
-        # Determine initials for avatar
         self.initials = (self.title_text[0] if self.title_text else "?").upper()
         
-        # Pick a color based on ID
         colors = ["blue", "green", "yellow", "magenta", "cyan", "white"]
         self.avatar_color = colors[abs(hash(str(self.dialog.id))) % len(colors)]
 
@@ -55,7 +53,7 @@ class ChatList(ListView):
     }
 
     def action_cursor_down(self) -> None:
-        """Move cursor to the next visible item."""
+        """Move cursor to the next visible item in the list."""
         if self.index is None:
             return
             
@@ -67,7 +65,7 @@ class ChatList(ListView):
             next_index += 1
 
     def action_cursor_up(self) -> None:
-        """Move cursor to the previous visible item."""
+        """Move cursor to the previous visible item in the list."""
         if self.index is None:
             return
             
@@ -85,22 +83,24 @@ class ChatList(ListView):
         filter_func = self.FILTER_MAP.get(category, lambda _: True)
         term = search_term.lower()
         
-        first_visible_index: Optional[int] = None
+        first_visible: Optional[int] = None
 
         for index, item in enumerate(self.children):
             if not isinstance(item, ChatItem):
                 continue
             
-            item.display = filter_func(item.dialog.entity) and term in item.search_text
+            is_visible = filter_func(item.dialog.entity) and term in item.search_text
+            item.display = is_visible
             
-            if item.display and first_visible_index is None:
-                first_visible_index = index
+            if is_visible and first_visible is None:
+                first_visible = index
 
-        if first_visible_index is None:
+        if first_visible is None:
             self.index = None
         else:
-            if self.index is None or self.index >= len(self.children) or not self.children[self.index].display:
-                self.index = first_visible_index
+            current_item_visible = self.index is not None and self.index < len(self.children) and self.children[self.index].display
+            if not current_item_visible:
+                self.index = first_visible
             
             if self.index is not None:
                 self.scroll_to_item(self.children[self.index])
