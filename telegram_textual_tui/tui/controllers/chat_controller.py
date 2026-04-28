@@ -45,7 +45,7 @@ class ChatController:
         except Exception:
             pass
 
-    async def fetch_dialogs(self, limit: int = 10, offset_date: Any = None) -> List[Any]:
+    async def fetch_dialogs(self, limit: int = 20, offset_date: Any = None) -> List[Any]:
         """
         Fetch a slice of dialogs (chats) from Telegram.
         """

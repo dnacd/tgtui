@@ -53,9 +53,11 @@ class AvatarManager:
         self.client = client
         self.cache_dir = AVATAR_CACHE_DIRECTORY
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        # In-memory cache to avoid redundant disk I/O
+        self._memory_cache: Dict[str, str] = {}
         # Strictly serialize rendering tasks to minimize CPU impact
         self._render_semaphore = asyncio.Semaphore(1)
-        # Limit concurrent network downloads to prevent UI lag
+        # Limit concurrent network downloads to prevent network storm
         self._download_semaphore = asyncio.Semaphore(3)
         
         self._setup_logging()
@@ -107,11 +109,18 @@ class AvatarManager:
 
         try:
             peer_id = peer.id
+            cache_key = f"{peer_id}_{size}"
+            
+            if cache_key in self._memory_cache:
+                return self._memory_cache[cache_key]
+
             cache_path = self._get_cache_path(peer_id, size)
             loop = asyncio.get_running_loop()
 
             if await loop.run_in_executor(None, cache_path.exists):
-                return await loop.run_in_executor(None, cache_path.read_text, "utf-8")
+                ansi_data = await loop.run_in_executor(None, cache_path.read_text, "utf-8")
+                self._memory_cache[cache_key] = ansi_data
+                return ansi_data
 
             temp_photo = self.cache_dir / f"temp_{peer_id}.jpg"
             
@@ -132,10 +141,12 @@ class AvatarManager:
                 
                 if rendered_text:
                     await loop.run_in_executor(None, lambda: cache_path.write_text(rendered_text, encoding="utf-8"))
+                    self._memory_cache[cache_key] = rendered_text
                     return rendered_text
             
             identicon = self._generate_identicon(peer_id, size == "large")
             await loop.run_in_executor(None, lambda: cache_path.write_text(identicon, encoding="utf-8"))
+            self._memory_cache[cache_key] = identicon
             return identicon
 
         except Exception as e:

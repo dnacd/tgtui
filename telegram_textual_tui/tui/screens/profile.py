@@ -102,7 +102,7 @@ class ProfileScreen(Screen):
             avatar_data = await avatar_manager.get_avatar(user_entity, size="large")
             avatar_widget = self.query_one("#profile-avatar", AnsiImage)
             if avatar_data:
-                await avatar_widget.update_image(avatar_data)
+                avatar_widget.update_image(avatar_data)
             else:
                 avatar_widget.set_loading(False)
         except Exception:

@@ -64,8 +64,11 @@ class MainScreen(Screen):
         
         self._loaded_messages: List[Any] = []
         self._sender_cache: Dict[int, str] = {}
+        self._panel_cache: Dict[int, Panel] = {}
         self._is_loading_more = False
         self._is_loading_chats = False
+        self._has_more_chats = True
+        self._has_more_history = True
         self._last_load_time = 0.0
 
         self._history_controller = HistoryController(self.app.telegram_manager)
@@ -134,7 +137,7 @@ class MainScreen(Screen):
 
     async def action_load_more_history(self) -> None:
         """Fetch older messages and prepend them to the view with scroll anchoring."""
-        if not self._selected_dialog_entity or self._is_loading_more or not self._loaded_messages:
+        if not self._selected_dialog_entity or self._is_loading_more or not self._loaded_messages or not self._has_more_history:
             return
             
         current_time = time.time()
@@ -159,6 +162,9 @@ class MainScreen(Screen):
                 self._loaded_messages = list(reversed(older_messages)) + self._loaded_messages
                 await self._render_messages(scroll_to_end=False)
                 
+                if len(older_messages) < 20:
+                    self._has_more_history = False
+
                 # Correct scroll position after layout refresh
                 def anchor_scroll():
                     new_height = log.virtual_size.height
@@ -167,6 +173,8 @@ class MainScreen(Screen):
                         log.scroll_to(y=delta, animate=False)
                 
                 self.call_after_refresh(anchor_scroll)
+            else:
+                self._has_more_history = False
         finally:
             self._is_loading_more = False
 
@@ -252,26 +260,33 @@ class MainScreen(Screen):
         self._reaction_target_message_id = message_id
 
     async def action_reload_all_dialogs(self) -> None:
-        """Update the sidebar with the latest batch of 10 dialogs."""
+        """Update the sidebar with the latest batch of dialogs (supports search)."""
         if self._is_loading_chats:
             return
             
         self._is_loading_chats = True
+        self._has_more_chats = True
         try:
+            search_term = self.query_one("#chat-search", Input).value
             chat_list = self.query_one(ChatList)
             chat_list.clear()
-            # Fetch only 1 for instant response, pagination will do the rest
-            dialogs = await self._chat_controller.fetch_dialogs(limit=1)
             
-            items = [ChatItem(dialog) for dialog in dialogs]
-            chat_list.extend(items)
-            self._sync_chat_filter()
+            dialogs = await self._chat_controller.fetch_dialogs(limit=20)
+            
+            if dialogs:
+                items = [ChatItem(dialog) for dialog in dialogs]
+                chat_list.extend(items)
+                self._sync_chat_filter()
+                if len(dialogs) < 20:
+                    self._has_more_chats = False
+            else:
+                self._has_more_chats = False
         finally:
             self._is_loading_chats = False
 
     async def action_load_more_chats(self) -> None:
-        """Fetch the next batch of 10 chats when reaching the bottom."""
-        if self._is_loading_chats:
+        """Fetch the next batch of 20 chats."""
+        if self._is_loading_chats or not self._has_more_chats:
             return
             
         chat_list = self.query_one(ChatList)
@@ -286,15 +301,17 @@ class MainScreen(Screen):
                 return
                 
             last_date = last_item.dialog.date
-            dialogs = await self._chat_controller.fetch_dialogs(limit=10, offset_date=last_date)
+            # Fetch the next 20 dialogs
+            dialogs = await self._chat_controller.fetch_dialogs(limit=20, offset_date=last_date)
             
-            # Skip the first one if it's a duplicate
-            new_dialogs = [d for d in dialogs if utils.get_peer_id(d.entity) != utils.get_peer_id(last_item.dialog.entity)]
-            
-            if new_dialogs:
-                items = [ChatItem(dialog) for dialog in new_dialogs]
+            if dialogs:
+                items = [ChatItem(dialog) for dialog in dialogs]
                 chat_list.extend(items)
                 self._sync_chat_filter()
+                if len(dialogs) < 20:
+                    self._has_more_chats = False
+            else:
+                self._has_more_chats = False
         finally:
             self._is_loading_chats = False
 
@@ -336,12 +353,14 @@ class MainScreen(Screen):
 
     def _check_history_scroll_top(self) -> None:
         """Check if message log is at the top to trigger older history loading."""
-        if not self._selected_dialog_entity or self._is_loading_more:
+        if not self._selected_dialog_entity or self._is_loading_more or not self._has_more_history:
             return
             
         messages_log = self.query_one("#messages", RichLog)
-        if messages_log.scroll_offset.y <= 1:
-            self.run_worker(self.action_load_more_history())
+        # Only trigger if there's actually something to scroll (virtual height > size)
+        if messages_log.virtual_size.height > messages_log.size.height:
+            if messages_log.scroll_offset.y <= 1:
+                self.run_worker(self.action_load_more_history())
 
     @on(ChatList.ReachedBottom)
     def on_chat_list_reached_bottom(self) -> None:
@@ -407,9 +426,19 @@ class MainScreen(Screen):
             self.query_one(ChatList).focus()
 
     @on(Input.Changed, "#chat-search")
-    def on_search_filter_changed(self) -> None:
-        """Filter the chat list sidebar based on search term."""
-        self._sync_chat_filter()
+    def on_search_filter_changed(self, event: Input.Changed) -> None:
+        """Handle search term changes with server-side triggering."""
+        self.run_worker(self._debounced_search(event.value))
+
+    async def _debounced_search(self, query: str) -> None:
+        """Wait for a brief moment before triggering a server-side search."""
+        await asyncio.sleep(0.5)
+        # Check if the query is still current
+        try:
+            if query == self.query_one("#chat-search", Input).value:
+                await self.action_reload_all_dialogs()
+        except Exception:
+            pass
 
     @on(Input.Submitted, "#chat-search")
     def on_search_submitted(self) -> None:
@@ -552,7 +581,9 @@ class MainScreen(Screen):
         self._selected_dialog_entity = entity
         
         self._loaded_messages = []
+        self._panel_cache = {}
         self._read_outbox_maximum_id = 0
+        self._has_more_history = True
         
         if self._me and self._me.id not in self._sender_cache:
             self._sender_cache[self._me.id] = get_telegram_entity_title(self._me)
@@ -583,8 +614,8 @@ class MainScreen(Screen):
             except Exception:
                 pass
 
-        # Fetch only 1 message for instant response
-        messages = await self._history_controller.get_messages(entity, limit=1)
+        # Load 15 messages for a stable initial view
+        messages = await self._history_controller.get_messages(entity, limit=15)
         self._loaded_messages = list(reversed(messages))
 
         if self._loaded_messages:

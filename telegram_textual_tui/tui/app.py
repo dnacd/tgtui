@@ -86,10 +86,11 @@ class TGTApp(App):
     
     ChatItem {
         layout: horizontal;
-        height: 5;
+        height: 4;
         padding: 0 1;
-        margin: 0 1;
+        margin: 1 0 0 0;
         border: none;
+        content-align: left middle;
     }
     
     ChatItem:hover {
@@ -114,19 +115,25 @@ class TGTApp(App):
     
     .chat-title {
         width: 1fr;
-        height: 1;
+        height: 100%;
         content-align: left middle;
-        margin-top: 1;
     }
     
     .chat-unread {
         width: auto;
         min-width: 3;
+        height: 100%;
         background: $accent;
         color: $text;
-        text-align: center;
+        content-align: center middle;
         text-style: bold;
-        margin-top: 1;
+    }
+
+    #message-input {
+        width: 100%;
+        margin: 0;
+        border: none;
+        background: $boost;
     }
     """
 

@@ -6,6 +6,8 @@ dialog entry with a stylized ANSI avatar miniature, while ChatList manages
 the collection of items, providing filtering by category and search term.
 """
 
+import asyncio
+import random
 from typing import Any, Callable, Dict, Optional
 
 from telethon.tl.types import Channel, Chat, User
@@ -52,9 +54,20 @@ class ChatItem(ListItem):
 
     def on_mount(self) -> None:
         """
-        Check cache and load avatar, only spawning a worker if necessary.
+        Check memory cache first to avoid background noise, otherwise spawn a worker.
         """
-        # We perform a quick check to see if the worker is needed
+        try:
+            telegram_manager = getattr(self.app, "telegram_manager", None)
+            if telegram_manager:
+                peer_id = self.dialog.entity.id
+                cache_key = f"{peer_id}_small"
+                if cache_key in telegram_manager.avatar_manager._memory_cache:
+                    ansi_data = telegram_manager.avatar_manager._memory_cache[cache_key]
+                    self.query_one("#chat-avatar", AnsiImage).update_image(ansi_data)
+                    return
+        except Exception:
+            pass
+
         self.run_worker(self._load_avatar())
 
     async def _load_avatar(self) -> None:
@@ -62,10 +75,13 @@ class ChatItem(ListItem):
         Fetch and apply the ANSI avatar art asynchronously.
         
         This worker method interacts with the AvatarManager to retrieve either 
-        a rendered photo or a generated identicon, ensuring the UI remains 
-        responsive during the process.
+        a rendered photo or a generated identicon. It preserves disk storage 
+        while leveraging memory caching for UI fluidity.
         """
         try:
+            # Stagger loading slightly during initial batch rendering
+            await asyncio.sleep(random.uniform(0.01, 0.1))
+            
             telegram_manager = getattr(self.app, "telegram_manager", None)
             if not telegram_manager:
                 return
@@ -75,11 +91,10 @@ class ChatItem(ListItem):
             
             avatar_widget = self.query_one("#chat-avatar", AnsiImage)
             if avatar_data:
-                await avatar_widget.update_image(avatar_data)
+                avatar_widget.update_image(avatar_data)
             else:
                 avatar_widget.set_loading(False)
         except Exception:
-            # If everything fails, disable loading to reveal the fallback letter
             try:
                 self.query_one("#chat-avatar", AnsiImage).set_loading(False)
             except Exception:

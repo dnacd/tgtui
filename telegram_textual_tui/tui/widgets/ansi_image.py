@@ -3,7 +3,7 @@ Custom Textual widget for rendering ANSI art.
 """
 
 import asyncio
-from typing import Optional, Union
+from typing import Optional, Union, Dict
 from rich.text import Text
 from textual.widgets import Static
 
@@ -21,6 +21,9 @@ class AnsiImage(Static):
         fallback_text: Text to display if no image data is available.
         is_loading: Boolean state indicating if a render task is in progress.
     """
+
+    # Global memory cache for parsed Rich Text objects
+    _parsed_cache: Dict[int, Text] = {}
 
     def __init__(self, image_data: Optional[str] = None, fallback_text: str = "?", **kwargs):
         """
@@ -40,7 +43,7 @@ class AnsiImage(Static):
         if image_data:
             self._cached_renderable = Text.from_ansi(image_data)
 
-    async def update_image(self, ansi_text: str) -> None:
+    def update_image(self, ansi_text: str) -> None:
         """
         Update the displayed image with a new ANSI string.
         
@@ -51,8 +54,12 @@ class AnsiImage(Static):
             ansi_text: The new ANSI-encoded string to display.
         """
         if ansi_text:
-            loop = asyncio.get_running_loop()
-            self._cached_renderable = await loop.run_in_executor(None, Text.from_ansi, ansi_text)
+            cache_key = hash(ansi_text)
+            if cache_key in self._parsed_cache:
+                self._cached_renderable = self._parsed_cache[cache_key]
+            else:
+                self._cached_renderable = Text.from_ansi(ansi_text)
+                self._parsed_cache[cache_key] = self._cached_renderable
         self.is_loading = False
         self.refresh()
 
@@ -61,7 +68,7 @@ class AnsiImage(Static):
         Manually toggle the visual loading state.
 
         Args:
-            loading: Whether to show the 'Rendering...' indicator.
+            loading: Whether to show the '...' indicator.
         """
         self.is_loading = loading
         self.refresh()
