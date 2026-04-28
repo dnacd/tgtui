@@ -4,6 +4,7 @@ Telegram client wrapper using Telethon.
 
 from telethon import TelegramClient
 from telegram_textual_tui.core.config import Config, TELEGRAM_SESSION_PATH
+from telegram_textual_tui.core.avatars import AvatarManager
 
 
 class TelegramManager:
@@ -24,6 +25,7 @@ class TelegramManager:
             config.api_id,
             config.api_hash,
         )
+        self.avatar_manager = AvatarManager(self.client)
 
     async def connect_to_telegram(self) -> None:
         """
