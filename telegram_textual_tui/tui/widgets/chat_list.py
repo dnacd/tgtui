@@ -1,34 +1,42 @@
 """
-Widget for displaying the list of Telegram dialogs with filtering and smart navigation.
+Widget for displaying the list of Telegram dialogs with avatars and filtering.
 """
 
 from typing import Any, Callable, Dict, Optional
 
 from telethon.tl.types import Channel, Chat, User
 from textual.app import ComposeResult
-from textual.widgets import Label, ListItem, ListView
+from textual.widgets import Label, ListItem, ListView, Static
 
 from telegram_textual_tui.utils.formatters import get_telegram_entity_title
 
 
 class ChatItem(ListItem):
     """
-    A single interactive item within the chat list sidebar.
+    A single interactive item within the chat list sidebar with an avatar placeholder.
     """
 
     def __init__(self, dialog: Any) -> None:
         """
-        Initialize a chat list item with Telegram dialog data.
+        Initialize a chat list item.
         """
         super().__init__()
         self.dialog = dialog
         self.title_text = get_telegram_entity_title(self.dialog.entity)
         self.search_text = self.title_text.lower()
+        
+        # Determine initials for avatar
+        self.initials = (self.title_text[0] if self.title_text else "?").upper()
+        
+        # Pick a color based on ID
+        colors = ["blue", "green", "yellow", "magenta", "cyan", "white"]
+        self.avatar_color = colors[abs(hash(str(self.dialog.id))) % len(colors)]
 
     def compose(self) -> ComposeResult:
         """
         Create the visual structure for the chat item.
         """
+        yield Static("•", classes=f"chat-avatar avatar-{self.avatar_color}")
         yield Label(self.title_text, classes="chat-title", markup=False)
         if self.dialog.unread_count > 0:
             yield Label(str(self.dialog.unread_count), classes="chat-unread")

@@ -23,44 +23,78 @@ class TGTApp(App):
     CSS = """
     #sidebar {
         width: 35;
-        border-right: solid $primary;
+        border-right: heavy $primary;
+        background: $surface;
     }
     #chat-area {
         width: 1fr;
+        background: $background;
     }
     #messages {
         height: 1fr;
-        border-bottom: solid $primary;
-        padding: 1;
+        border-bottom: heavy $primary;
+        padding: 1 2;
     }
     #message-input {
         margin: 0;
         border: none;
+        height: 3;
     }
     #chat-search {
         margin: 0;
         border: none;
-        border-bottom: solid $primary;
+        border-bottom: heavy $primary;
     }
     ChatItem {
         layout: horizontal;
-        height: 1;
+        height: 3;
         padding: 0 1;
-        overflow: hidden;
+        margin: 0 1;
+        border: none;
     }
+    ChatItem:hover {
+        background: $boost;
+    }
+    ChatItem.--highlight {
+        background: $accent;
+        color: $text;
+        text-style: bold;
+    }
+    .chat-avatar {
+        width: 2;
+        height: 1;
+        margin: 1 1 0 0;
+        text-align: center;
+        text-style: bold;
+    }
+    .avatar-blue { color: #4a90e2; }
+    .avatar-green { color: #7ed321; }
+    .avatar-yellow { color: #f5a623; }
+    .avatar-magenta { color: #bd10e0; }
+    .avatar-cyan { color: #50e3c2; }
+    .avatar-white { color: #9b9b9b; }
+    
+    #messages:focus {
+        border-bottom: heavy $primary;
+    }
+    
     .chat-title {
         width: 1fr;
         height: 1;
         content-align: left middle;
         text-overflow: ellipsis;
+        margin-top: 1;
     }
     .chat-unread {
         width: auto;
         min-width: 3;
         height: 1;
         color: $accent;
+        background: $surface;
         content-align: right middle;
         text-style: bold;
+        margin-top: 1;
+        padding: 0 1;
     }
     #login-form, #profile-container {
         width: 50;
@@ -73,6 +107,7 @@ class TGTApp(App):
         width: 100%;
         margin-bottom: 1;
         text-style: bold;
+        color: $accent;
     }
     #profile-details {
         margin-bottom: 1;
@@ -80,6 +115,14 @@ class TGTApp(App):
     }
     Input {
         margin-bottom: 1;
+        border: tall $primary;
+    }
+    Input:focus {
+        border: tall $accent;
+    }
+    Tabs {
+        height: 3;
+        border-bottom: solid $primary;
     }
     """
 

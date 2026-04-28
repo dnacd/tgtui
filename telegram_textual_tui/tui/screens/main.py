@@ -4,6 +4,7 @@ Provides a multi-column layout for chat selection and message history.
 """
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+import time
 
 from telethon import events
 from telethon.tl.functions.channels import GetFullChannelRequest
@@ -17,8 +18,11 @@ from telethon.tl.types import (
     ReactionEmoji,
     User,
 )
-from textual import on
+from rich.panel import Panel
+from rich.text import Text
+from textual import events as textual_events, on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Input, Label, ListView, RichLog, Tabs
@@ -57,6 +61,7 @@ class MainScreen(Screen):
         self._loaded_messages: List[Any] = []
         self._sender_cache: Dict[int, str] = {}
         self._is_loading_more = False
+        self._last_load_time = 0.0
 
         # Controllers
         self._history_controller = HistoryController(self.app.telegram_manager)
@@ -104,15 +109,17 @@ class MainScreen(Screen):
         self.query_one("#chat-list", ChatList).focus()
 
     async def action_focus_message_input(self) -> None:
-        """Move focus to the message input field."""
-        self.query_one("#message-input", Input).focus()
+        """Move focus to the message input field or messages log if input is disabled."""
+        input_widget = self.query_one("#message-input", Input)
+        if not input_widget.disabled:
+            input_widget.focus()
+        else:
+            self.query_one("#messages", RichLog).focus()
 
     async def action_scroll_messages_up(self) -> None:
-        """Scroll the message history log upwards and auto-load more if needed."""
+        """Scroll the message history log upwards."""
         messages_log = self.query_one("#messages", RichLog)
         messages_log.scroll_up()
-        
-        # Trigger load when getting close to the top
         if messages_log.scroll_offset.y <= 1:
             await self.action_load_more_history()
 
@@ -121,12 +128,19 @@ class MainScreen(Screen):
         self.query_one("#messages", RichLog).scroll_down()
 
     async def action_load_more_history(self) -> None:
-        """Fetch older messages and prepend them to the view."""
+        """Fetch older messages and prepend them to the view with debouncing."""
         if not self._selected_dialog_entity or self._is_loading_more or not self._loaded_messages:
+            return
+            
+        # Cooldown: don't load more than once every 1.5 seconds
+        current_time = time.time()
+        if current_time - self._last_load_time < 1.5:
             return
 
         self._is_loading_more = True
+        self._last_load_time = current_time
         try:
+            # Oldest message is at index 0 because we reverse it after fetch
             oldest_id = self._loaded_messages[0].id
             older_messages = await self._history_controller.get_messages(
                 self._selected_dialog_entity, 
@@ -135,6 +149,9 @@ class MainScreen(Screen):
             )
             
             if older_messages:
+                # iter_messages returns [newest ... oldest]
+                # we want [oldest ... newest] for our internal list
+                # So we reverse the new batch and prepend it
                 self._loaded_messages = list(reversed(older_messages)) + self._loaded_messages
                 await self._render_messages()
         finally:
@@ -249,7 +266,9 @@ class MainScreen(Screen):
 
     async def on_mount(self) -> None:
         """Initialize event handlers and load initial data."""
-        self.query_one("#messages", RichLog).write("[dim]Select a chat to begin...[/dim]")
+        messages_log = self.query_one("#messages", RichLog)
+        messages_log.can_focus = True
+        messages_log.write("[dim]Select a chat to begin...[/dim]")
         
         application_instance: TGTApp = self.app
         if application_instance.telegram_manager:
@@ -285,6 +304,13 @@ class MainScreen(Screen):
         if chat_list.index is not None:
             chat_list.focus()
 
+    async def on_key(self, event: textual_events.Key) -> None:
+        """Handle global key events for history loading triggers."""
+        if event.key in ("up", "pageup"):
+            messages_log = self.query_one("#messages", RichLog)
+            if messages_log.scroll_offset.y <= 1:
+                await self.action_load_more_history()
+
     def _sync_chat_filter(self) -> None:
         """Coordinate filtering between category tabs and search input."""
         try:
@@ -312,21 +338,10 @@ class MainScreen(Screen):
         chat_id = event.chat_id
         if self._selected_dialog_id == chat_id:
             self._last_received_message_id = event.message.id
-            log = self.query_one("#messages", RichLog)
             
-            sid = getattr(event.message, "sender_id", 0)
-            if sid not in self._sender_cache:
-                sender = await event.get_sender()
-                self._sender_cache[sid] = get_telegram_entity_title(sender)
-            
-            name = self._sender_cache[sid]
-            
-            status = ""
-            if event.out:
-                status = " [dim]•[/dim]"
-                
-            link = f"[@click=screen.show_user_profile({sid})][bold cyan]{name}[/bold cyan][/@click]"
-            log.write(f"{link}: {event.message.text or '[Media]'}{status}")
+            # Store in history and re-render
+            self._loaded_messages.append(event.message)
+            await self._render_messages()
 
             await self._chat_controller.mark_as_read(event.input_chat)
             return
@@ -347,8 +362,6 @@ class MainScreen(Screen):
         log = self.query_one("#messages", RichLog)
         log.clear()
         
-        is_dm = isinstance(self._selected_dialog_entity, User)
-        
         for msg in self._loaded_messages:
             sid = getattr(msg, "sender_id", 0)
             
@@ -357,36 +370,61 @@ class MainScreen(Screen):
                 self._sender_cache[sid] = get_telegram_entity_title(sender)
 
             name = self._sender_cache[sid]
-            status = ""
+            timestamp = msg.date.strftime("%H:%M")
+            
+            status_dot = ""
             if msg.out:
-                # Bold purple dot for read, gray dot for sent
                 is_read = msg.id <= self._read_outbox_maximum_id
                 dot_color = "bold purple" if is_read else "dim"
-                status = f" [{dot_color}]•[/{dot_color}]"
+                status_dot = f" [{dot_color}]•[/{dot_color}]"
             
-            reacts = self._format_message_reactions(msg.id, getattr(msg, "reactions", None))
-            link = f"[@click=screen.show_user_profile({sid})][bold cyan]{name}[/bold cyan][/@click]"
-            log.write(f"{link}: {msg.text or '[Media]'}{status}{reacts}")
+            title = f"[bold cyan]{name}[/] [dim]• {timestamp}[/]"
+            subtitle = f"{status_dot}{self._format_message_reactions(msg.id, getattr(msg, 'reactions', None))}"
+            border_style = "blue" if msg.out else "white"
+            
+            panel = Panel(
+                Text.from_markup(msg.text or "[dim][Media][/dim]"),
+                title=Text.from_markup(title),
+                subtitle=Text.from_markup(subtitle),
+                title_align="left",
+                subtitle_align="right",
+                border_style=border_style,
+                padding=(0, 1),
+                expand=True
+            )
+            log.write(panel)
 
     async def _load_message_history(self, entity: Any, item: Optional[ChatItem] = None) -> None:
         """Fetch and render initial message history for the selected peer."""
         self._selected_dialog_id = entity.id
         self._selected_dialog_entity = entity
         
+        # Reset state
         self._loaded_messages = []
         self._sender_cache = {}
 
+        # Fetch fresh read status
         self._read_outbox_maximum_id = await self._chat_controller.get_read_outbox_max_id(entity)
 
         log = self.query_one("#messages", RichLog)
         log.clear()
-        
+
+        # Input state
         can_send, placeholder = self._message_controller.get_messaging_status(entity)
         input_widget = self.query_one("#message-input", Input)
         input_widget.disabled = not can_send
         input_widget.placeholder = placeholder
         input_widget.value = ""
 
+        # AUTOMATIC FOCUS FIX:
+        # If input is disabled (read-only), move focus to messages log
+        # Otherwise move to input as usual
+        if can_send:
+            input_widget.focus()
+        else:
+            log.focus()
+
+        # Mark as read
         await self._chat_controller.mark_as_read(entity)
         if item:
             try:
@@ -394,6 +432,7 @@ class MainScreen(Screen):
             except Exception:
                 pass
 
+        # Load batch
         messages = await self._history_controller.get_messages(entity, limit=30)
         self._loaded_messages = list(reversed(messages))
 
@@ -412,7 +451,6 @@ class MainScreen(Screen):
     @on(Input.Submitted, "#message-input")
     async def on_message_input_submitted(self, event: Input.Submitted) -> None:
         """Handle sending text or emojis."""
-        application_instance: TGTApp = self.app
         text = event.value.strip()
         if not text:
             return
@@ -441,4 +479,3 @@ class MainScreen(Screen):
         if isinstance(item, ChatItem):
             await self._message_controller.send_text(item.dialog.entity, text)
             event.input.value = ""
-            await self._load_message_history(item.dialog.entity, item)
