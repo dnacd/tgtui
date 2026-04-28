@@ -4,7 +4,7 @@ use image::{imageops, GenericImageView, Rgba, RgbaImage};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-#[pyfunction(signature = (data, cols, bright=1.1, sat=1.1, contrast=1.2, _ascii_map=None))]
+#[pyfunction(signature = (data, cols, bright=1.1, sat=1.1, contrast=1.2, _ansi_map=None))]
 fn render_to_ansi(
     _py: Python<'_>,
     data: &Bound<'_, PyBytes>,
@@ -12,7 +12,7 @@ fn render_to_ansi(
     bright: f32,
     sat: f32,
     contrast: f32,
-    _ascii_map: Option<&str>,
+    _ansi_map: Option<&str>,
 ) -> PyResult<String> {
     let bytes = data.as_bytes();
     let img = image::load_from_memory(bytes)
@@ -49,7 +49,7 @@ fn render_to_ansi(
 }
 
 #[pymodule]
-fn ascii_render_native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn ansi_render_native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_to_ansi, m)?)?;
     Ok(())
 }

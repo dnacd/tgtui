@@ -1,5 +1,5 @@
 """
-Custom Textual widget for rendering ANSI ASCII art.
+Custom Textual widget for rendering ANSI art.
 """
 
 from typing import Optional, Union
@@ -7,13 +7,13 @@ from rich.text import Text
 from textual.widgets import Static
 
 
-class AsciiImage(Static):
+class AnsiImage(Static):
     """
     A high-performance widget for displaying ANSI-encoded art strings.
     
     This widget optimizes the rendering of complex ANSI escape sequences by 
     caching the parsed Rich Text object. This prevents the TUI from freezing 
-    when large or detailed ASCII art is displayed or updated, as it avoids 
+    when large or detailed ANSI art is displayed or updated, as it avoids 
     re-parsing the ANSI string on every UI tick.
     
     Attributes:
@@ -23,7 +23,7 @@ class AsciiImage(Static):
 
     def __init__(self, image_data: Optional[str] = None, fallback_text: str = "?", **kwargs):
         """
-        Initialize the AsciiImage widget.
+        Initialize the AnsiImage widget.
 
         Args:
             image_data: Optional initial ANSI string to display.
@@ -69,7 +69,7 @@ class AsciiImage(Static):
         Produce the renderable content for Textual's compositor.
         
         Priority order:
-        1. 'Rendering...' if is_loading is True.
+        1. Stylized '...' if is_loading is True (matching app style).
         2. The cached ANSI Text object if it exists.
         3. The fallback_text as a final resort.
 
@@ -77,7 +77,7 @@ class AsciiImage(Static):
             A Rich Text object, a loading string, or the fallback text.
         """
         if self.is_loading:
-            return "[bold cyan]Rendering...[/bold cyan]"
+            return Text("...", style="bold italic $accent", justify="center")
         
         if self._cached_renderable:
             return self._cached_renderable

@@ -13,7 +13,7 @@ from textual.app import ComposeResult
 from textual.widgets import Label, ListItem, ListView
 
 from telegram_textual_tui.utils.formatters import get_telegram_entity_title
-from telegram_textual_tui.tui.widgets.ascii_image import AsciiImage
+from telegram_textual_tui.tui.widgets.ansi_image import AnsiImage
 
 
 class ChatItem(ListItem):
@@ -44,7 +44,7 @@ class ChatItem(ListItem):
         """
         Create the visual structure for the chat item using a horizontal layout.
         """
-        yield AsciiImage(id="chat-avatar", fallback_text=self.initials, classes="chat-avatar-mini")
+        yield AnsiImage(id="chat-avatar", image_data=None, fallback_text=self.initials, classes="chat-avatar-mini")
         yield Label(self.title_text, classes="chat-title", markup=False)
         if self.dialog.unread_count > 0:
             yield Label(str(self.dialog.unread_count), classes="chat-unread")
@@ -64,16 +64,22 @@ class ChatItem(ListItem):
         responsive during the process.
         """
         try:
-            avatar_manager = self.app.telegram_manager.avatar_manager
-            # AvatarManager is guaranteed to return an ANSI string (photo or identicon)
+            telegram_manager = getattr(self.app, "telegram_manager", None)
+            if not telegram_manager:
+                return
+
+            avatar_manager = telegram_manager.avatar_manager
             avatar_data = await avatar_manager.get_avatar(self.dialog.entity, size="small")
             
-            avatar_widget = self.query_one("#chat-avatar", AsciiImage)
-            avatar_widget.update_image(avatar_data)
+            avatar_widget = self.query_one("#chat-avatar", AnsiImage)
+            if avatar_data:
+                avatar_widget.update_image(avatar_data)
+            else:
+                avatar_widget.set_loading(False)
         except Exception:
             # If everything fails, disable loading to reveal the fallback letter
             try:
-                self.query_one("#chat-avatar", AsciiImage).set_loading(False)
+                self.query_one("#chat-avatar", AnsiImage).set_loading(False)
             except Exception:
                 pass
 

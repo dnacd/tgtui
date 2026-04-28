@@ -12,7 +12,7 @@ from textual.containers import Container, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Label, Static
 
-from telegram_textual_tui.tui.widgets.ascii_image import AsciiImage
+from telegram_textual_tui.tui.widgets.ansi_image import AnsiImage
 
 if TYPE_CHECKING:
     from telegram_textual_tui.tui.app import TGTApp
@@ -45,7 +45,7 @@ class ProfileScreen(Screen):
         yield Container(
             Vertical(
                 Label("User Profile", id="profile-title"),
-                AsciiImage(id="profile-avatar"),
+                AnsiImage(id="profile-avatar"),
                 Static(id="profile-details"),
                 Button("Back", variant="primary", id="profile-back-btn"),
                 id="profile-container"
@@ -69,7 +69,7 @@ class ProfileScreen(Screen):
             # Load avatar in background
             first_name = getattr(user_entity, 'first_name', '') or ''
             initials = (first_name[0] if first_name else "?").upper()
-            avatar_widget = self.query_one("#profile-avatar", AsciiImage)
+            avatar_widget = self.query_one("#profile-avatar", AnsiImage)
             avatar_widget.fallback_text = initials
             self.run_worker(self._load_avatar(user_entity))
 
@@ -99,7 +99,7 @@ class ProfileScreen(Screen):
         """Load and render the user avatar."""
         avatar_manager = self.app.telegram_manager.avatar_manager
         avatar_data = await avatar_manager.get_avatar(user_entity, size="large")
-        avatar_widget = self.query_one("#profile-avatar", AsciiImage)
+        avatar_widget = self.query_one("#profile-avatar", AnsiImage)
         if avatar_data:
             avatar_widget.update_image(avatar_data)
         else:

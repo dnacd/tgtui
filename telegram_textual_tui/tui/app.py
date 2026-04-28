@@ -101,6 +101,10 @@ class TGTApp(App):
         color: $text;
         text-style: bold;
     }
+
+    AnsiImage {
+        content-align: center middle;
+    }
     
     .chat-avatar-mini {
         width: 16;
@@ -148,9 +152,9 @@ class TGTApp(App):
         This method checks for an active session and authenticates the user.
         If no session is found, it redirects the user to the Login screen.
         """
-        from telegram_textual_tui.core.avatars import ascii_render_native
-        if ascii_render_native is None:
-            self.notify("ASCII Render module not loaded!", severity="error")
+        from telegram_textual_tui.core.avatars import ansi_render_native
+        if ansi_render_native is None:
+            self.notify("ANSI Render module not loaded!", severity="error")
 
         if not self.telegram_manager:
             await self.push_screen(LoginScreen())
