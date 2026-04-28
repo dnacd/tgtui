@@ -2,4 +2,4 @@
 Telegram Textual TUI (TGT) package.
 """
 
-__version__ = "0.1.1"
+__version__ = "tgtui-0.20r"
