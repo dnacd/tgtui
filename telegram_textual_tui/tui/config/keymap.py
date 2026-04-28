@@ -4,6 +4,7 @@ Provides localized bindings for both English and Russian layouts.
 """
 
 from typing import List, Optional
+
 from textual.binding import Binding
 
 
@@ -15,7 +16,9 @@ def create_localized_binding(
     show: bool = True,
     priority: bool = False,
 ) -> List[Binding]:
-    """Create a pair of bindings for English and Russian layouts."""
+    """
+    Create a pair of bindings for English and Russian layouts.
+    """
     bindings = [Binding(en_key, action, description, show=show, priority=priority)]
     if ru_key:
         bindings.append(Binding(ru_key, action, description, show=False, priority=priority))
@@ -23,7 +26,9 @@ def create_localized_binding(
 
 
 class Keymap:
-    """Groups of localized bindings for the application."""
+    """
+    Groups of localized bindings for different parts of the application.
+    """
 
     GLOBAL = [
         *create_localized_binding("ctrl+q", None, "quit", "Quit"),
@@ -42,6 +47,10 @@ class Keymap:
         *create_localized_binding("l", "д", "reload_all_dialogs", "Reload"),
         Binding("pageup", "scroll_messages_up", "Scroll Up", show=False),
         Binding("pagedown", "scroll_messages_down", "Scroll Down", show=False),
+        Binding("up", "scroll_messages_up", "Scroll Up", show=False),
+        Binding("down", "scroll_messages_down", "Scroll Down", show=False),
+        *create_localized_binding("[", "х", "prev_tab", "Prev Tab", show=False, priority=True),
+        *create_localized_binding("]", "ъ", "next_tab", "Next Tab", show=False, priority=True),
     ]
 
     PROFILE_SCREEN = [

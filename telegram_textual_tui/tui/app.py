@@ -9,6 +9,7 @@ from textual.widgets import Footer, Header
 
 from telegram_textual_tui.core.client import TelegramManager
 from telegram_textual_tui.core.config import load_application_configuration
+from telegram_textual_tui.tui.config.keymap import Keymap
 from telegram_textual_tui.tui.screens.login import LoginScreen
 from telegram_textual_tui.tui.screens.main import MainScreen
 
@@ -113,7 +114,8 @@ class TGTApp(App):
         """
         yield Header()
         yield Footer()
- layout including the global header and footer.
-        """
-        yield Header()
-        yield Footer()
+
+def main():
+    """Entry point for the TUI application."""
+    app = TGTApp()
+    app.run()
