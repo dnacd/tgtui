@@ -4,6 +4,7 @@ Provides a multi-column layout for chat selection and message history.
 """
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+import asyncio
 import time
 
 from telethon import events, utils
@@ -456,10 +457,9 @@ class MainScreen(Screen):
             except Exception:
                 pass
 
-        # Build all panels first
-        panels = []
-        for msg in self._loaded_messages:
-            panels.append(await self._get_message_panel(msg))
+        # Build all panels in parallel
+        tasks = [self._get_message_panel(msg) for msg in self._loaded_messages]
+        panels = await asyncio.gather(*tasks)
         
         # Batch write to avoid excessive UI ticks
         for panel in panels:

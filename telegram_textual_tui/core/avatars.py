@@ -55,6 +55,8 @@ class AvatarManager:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         # Strictly serialize rendering tasks to minimize CPU impact
         self._render_semaphore = asyncio.Semaphore(1)
+        # Limit concurrent network downloads to prevent UI lag
+        self._download_semaphore = asyncio.Semaphore(3)
         
         self._setup_logging()
 
@@ -113,7 +115,8 @@ class AvatarManager:
 
             temp_photo = self.cache_dir / f"temp_{peer_id}.jpg"
             
-            path = await self.client.download_profile_photo(peer, file=str(temp_photo))
+            async with self._download_semaphore:
+                path = await self.client.download_profile_photo(peer, file=str(temp_photo))
             
             if path and ansi_render_native:
                 original_bytes = await loop.run_in_executor(None, temp_photo.read_bytes)

@@ -63,4 +63,5 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 
 1. `tgt init` — Set up your API credentials (from my.telegram.org).
 2. `tgt login` — Sign in to Telegram.
-3. `tgt tui` — Enter the terminal.
+3. `tgt clean` — Clear the local avatar cache and logs.
+4. `tgt tui` — Enter the terminal.

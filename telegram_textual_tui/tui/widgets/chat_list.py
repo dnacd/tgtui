@@ -51,8 +51,9 @@ class ChatItem(ListItem):
 
     def on_mount(self) -> None:
         """
-        Trigger avatar loading as soon as the item is attached to the DOM.
+        Check cache and load avatar, only spawning a worker if necessary.
         """
+        # We perform a quick check to see if the worker is needed
         self.run_worker(self._load_avatar())
 
     async def _load_avatar(self) -> None:

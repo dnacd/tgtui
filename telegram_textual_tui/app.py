@@ -6,6 +6,7 @@ import asyncio
 import os
 import sys
 import webbrowser
+import shutil
 from typing import Optional
 
 import typer
@@ -18,6 +19,8 @@ from telegram_textual_tui.core.config import (
     save_application_configuration,
     Config,
     TELEGRAM_SESSION_PATH,
+    APPLICATION_DIRECTORY,
+    AVATAR_CACHE_DIRECTORY,
     ensure_application_directory_exists,
 )
 from telegram_textual_tui.core.client import TelegramManager
@@ -157,6 +160,23 @@ def logout():
         output_console.print("[green]Logged out and session removed.[/green]")
     else:
         output_console.print("[yellow]No active session found.[/yellow]")
+
+
+@application.command()
+def clean():
+    """
+    Clear the local cache including rendered avatars and logs.
+    """
+    
+    if AVATAR_CACHE_DIRECTORY.exists():
+        shutil.rmtree(AVATAR_CACHE_DIRECTORY)
+        AVATAR_CACHE_DIRECTORY.mkdir(parents=True, exist_ok=True)
+        output_console.print("[green]Avatar cache cleared.[/green]")
+    
+    log_file = APPLICATION_DIRECTORY / "app.log"
+    if log_file.exists():
+        log_file.unlink()
+        output_console.print("[green]Application logs cleared.[/green]")
 
 
 @application.command()
