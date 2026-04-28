@@ -1,50 +1,89 @@
 """
 Widget for displaying the list of Telegram dialogs with avatars and filtering.
+
+This module contains the ChatItem and ChatList widgets. ChatItem renders a single 
+dialog entry with a stylized ANSI avatar miniature, while ChatList manages 
+the collection of items, providing filtering by category and search term.
 """
 
 from typing import Any, Callable, Dict, Optional
 
 from telethon.tl.types import Channel, Chat, User
 from textual.app import ComposeResult
-from textual.widgets import Label, ListItem, ListView, Static
+from textual.widgets import Label, ListItem, ListView
 
 from telegram_textual_tui.utils.formatters import get_telegram_entity_title
+from telegram_textual_tui.tui.widgets.ascii_image import AsciiImage
 
 
 class ChatItem(ListItem):
     """
-    A single interactive item within the chat list sidebar with an avatar placeholder.
+    An individual interactive item in the sidebar representing a Telegram chat.
+    
+    This widget lazily loads the chat partner's avatar or generates a unique 
+    ANSI identicon if no profile photo is available.
     """
 
     def __init__(self, dialog: Any) -> None:
         """
-        Initialize a chat list item with dialog data and avatar styling.
+        Initialize a chat list item.
+
+        Args:
+            dialog: A Telethon Dialog object containing chat and message metadata.
         """
         super().__init__()
         self.dialog = dialog
         self.title_text = get_telegram_entity_title(self.dialog.entity)
         self.search_text = self.title_text.lower()
         
-        self.initials = (self.title_text[0] if self.title_text else "?").upper()
-        
-        colors = ["blue", "green", "yellow", "magenta", "cyan", "white"]
-        self.avatar_color = colors[abs(hash(str(self.dialog.id))) % len(colors)]
+        # Determine initials for the fallback state before the avatar is rendered
+        first_char = self.title_text[0] if self.title_text else "?"
+        self.initials = first_char.upper()
 
     def compose(self) -> ComposeResult:
         """
-        Create the visual structure for the chat item.
+        Create the visual structure for the chat item using a horizontal layout.
         """
-        yield Static("•", classes=f"chat-avatar avatar-{self.avatar_color}")
+        yield AsciiImage(id="chat-avatar", fallback_text=self.initials, classes="chat-avatar-mini")
         yield Label(self.title_text, classes="chat-title", markup=False)
         if self.dialog.unread_count > 0:
             yield Label(str(self.dialog.unread_count), classes="chat-unread")
 
+    def on_mount(self) -> None:
+        """
+        Trigger avatar loading as soon as the item is attached to the DOM.
+        """
+        self.run_worker(self._load_avatar())
+
+    async def _load_avatar(self) -> None:
+        """
+        Fetch and apply the ANSI avatar art asynchronously.
+        
+        This worker method interacts with the AvatarManager to retrieve either 
+        a rendered photo or a generated identicon, ensuring the UI remains 
+        responsive during the process.
+        """
+        try:
+            avatar_manager = self.app.telegram_manager.avatar_manager
+            # AvatarManager is guaranteed to return an ANSI string (photo or identicon)
+            avatar_data = await avatar_manager.get_avatar(self.dialog.entity, size="small")
+            
+            avatar_widget = self.query_one("#chat-avatar", AsciiImage)
+            avatar_widget.update_image(avatar_data)
+        except Exception:
+            # If everything fails, disable loading to reveal the fallback letter
+            try:
+                self.query_one("#chat-avatar", AsciiImage).set_loading(False)
+            except Exception:
+                pass
+
 
 class ChatList(ListView):
     """
-    List view containing Telegram chats with category and search filtering.
+    A scrollable list of ChatItems with filtering capabilities.
     """
 
+    # Mapping of filter keys to predicate functions for easy classification
     FILTER_MAP: Dict[str, Callable[[Any], bool]] = {
         "all": lambda _: True,
         "private": lambda entity: isinstance(entity, User) and not entity.bot,
@@ -53,7 +92,9 @@ class ChatList(ListView):
     }
 
     def action_cursor_down(self) -> None:
-        """Move cursor to the next visible item in the list."""
+        """
+        Navigate the selection cursor to the next visible item.
+        """
         if self.index is None:
             return
             
@@ -65,7 +106,9 @@ class ChatList(ListView):
             next_index += 1
 
     def action_cursor_up(self) -> None:
-        """Move cursor to the previous visible item in the list."""
+        """
+        Navigate the selection cursor to the previous visible item.
+        """
         if self.index is None:
             return
             
@@ -78,7 +121,11 @@ class ChatList(ListView):
 
     def apply_filter(self, category: str, search_term: str) -> None:
         """
-        Filter the list items based on the active category and search term.
+        Filter the displayed chat items by category and search keyword.
+
+        Args:
+            category: One of 'all', 'private', 'groups', or 'bots'.
+            search_term: The case-insensitive substring to search for in titles.
         """
         filter_func = self.FILTER_MAP.get(category, lambda _: True)
         term = search_term.lower()
@@ -98,8 +145,11 @@ class ChatList(ListView):
         if first_visible is None:
             self.index = None
         else:
-            current_item_visible = self.index is not None and self.index < len(self.children) and self.children[self.index].display
-            if not current_item_visible:
+            # Maintain relative cursor position if the current item is still visible
+            current_visible = (self.index is not None and 
+                              self.index < len(self.children) and 
+                              self.children[self.index].display)
+            if not current_visible:
                 self.index = first_visible
             
             if self.index is not None:

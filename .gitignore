@@ -26,3 +26,8 @@ wheels/
 .telegram_textual_tui/
 .vscode/
 .idea/
+
+# Rust artifacts
+**/target/
+telegram_textual_tui/ascii_tool/target/
+Cargo.lock

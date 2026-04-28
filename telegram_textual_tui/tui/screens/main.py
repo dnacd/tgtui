@@ -147,10 +147,13 @@ class MainScreen(Screen):
         finally:
             self._is_loading_more = False
 
-    async def action_show_user_profile(self, user_id: int) -> None:
+    async def action_show_user_profile(self, user_id: Any, msg_id: Any = None) -> None:
         """Switch to a user's profile based on their ID."""
-        if user_id:
-            self.app.push_screen(ProfileScreen(user_id=user_id))
+        try:
+            uid = int(user_id)
+            self.app.push_screen(ProfileScreen(user_id=uid))
+        except Exception:
+            pass
 
     async def action_show_reactions(self, message_id: int) -> None:
         """Fetch and display users who reacted to a specific message."""
@@ -398,6 +401,9 @@ class MainScreen(Screen):
         name = self._sender_cache.get(sid, "Unknown")
         timestamp = msg.date.strftime("%H:%M")
         
+        # We use app. prefix and unique msg.id to make each link distinct
+        clickable_name = f"[@click=app.show_user_profile('{sid}','{msg.id}')]{name}[/@click]" if sid else name
+        
         status_dot = ""
         if msg.out:
             is_saved_messages = self._me and self._selected_dialog_id == self._me.id
@@ -405,7 +411,7 @@ class MainScreen(Screen):
             dot_color = "bold purple" if is_read else "dim"
             status_dot = f" [{dot_color}]•[/{dot_color}]"
         
-        title = f"[bold cyan]{name}[/] [dim]• {timestamp}[/]"
+        title = f"[bold cyan]{clickable_name}[/] [dim]• {timestamp}[/]"
         subtitle = f"{status_dot}{format_message_reactions(msg.id, getattr(msg, 'reactions', None))}"
         
         return Panel(

@@ -1,147 +1,157 @@
 """
-Main Textual Application for Telegram Textual TUI.
-Orchestrates the lifecycle of the application and coordinates between screens.
+Main application module for the Telegram Textual TUI.
+
+This module initializes the Textual environment, manages global application 
+state (including the Telegram manager), handles routing between different 
+screens (Login, Main, Profile), and defines the global visual style (CSS).
 """
+
+from typing import Optional
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header
 
-from telegram_textual_tui.core.client import TelegramManager
 from telegram_textual_tui.core.config import load_application_configuration
-from telegram_textual_tui.tui.config.keymap import Keymap
+from telegram_textual_tui.core.client import TelegramManager
 from telegram_textual_tui.tui.screens.login import LoginScreen
 from telegram_textual_tui.tui.screens.main import MainScreen
+from telegram_textual_tui.tui.screens.profile import ProfileScreen
 
 
 class TGTApp(App):
     """
-    The main Application class for the Telegram Textual TUI.
-    Handles global state, configuration, and top-level navigation.
+    The core Application class that coordinates between Telegram and the TUI.
+    
+    Attributes:
+        configuration: The loaded application settings (API ID, Hash, etc.).
+        telegram_manager: Wrapper for the Telethon client and avatar system.
     """
 
     CSS = """
-    #sidebar {
-        width: 35;
-        border-right: heavy $primary;
-        background: $surface;
-    }
-    #chat-area {
-        width: 1fr;
+    Screen {
         background: $background;
     }
-    #messages {
-        height: 1fr;
-        border-bottom: heavy $primary;
+    
+    /* Profile Screen Layout */
+    Screen#ProfileScreen {
+        align: center middle;
+    }
+    
+    #profile-container {
+        width: 54;
+        height: auto;
+        border: thick $primary;
+        background: $surface;
         padding: 1 2;
     }
-    #message-input {
-        margin: 0;
-        border: none;
-        height: 3;
+    
+    #profile-title {
+        width: 100%;
+        text-align: center;
+        text-style: bold;
+        background: $primary;
+        color: $text;
+        margin-bottom: 1;
     }
-    #chat-search {
-        margin: 0;
-        border: none;
-        border-bottom: heavy $primary;
+    
+    #profile-avatar {
+        width: 50;
+        height: 25;
+        margin: 1 0;
     }
+    
+    #profile-details {
+        margin-top: 1;
+        border: solid $primary;
+        padding: 1;
+    }
+    
+    #profile-back-btn {
+        margin-top: 1;
+        width: 100%;
+    }
+    
+    /* Main Screen Sidebar and Chat Area */
+    #sidebar {
+        width: 40;
+        height: 100%;
+        border-right: solid $primary;
+    }
+    
+    #chat-area {
+        width: 1fr;
+        height: 100%;
+    }
+    
     ChatItem {
         layout: horizontal;
-        height: 3;
+        height: 5;
         padding: 0 1;
         margin: 0 1;
         border: none;
     }
+    
     ChatItem:hover {
         background: $boost;
     }
+    
     ChatItem.--highlight {
         background: $accent;
         color: $text;
         text-style: bold;
     }
-    .chat-avatar {
-        width: 2;
-        height: 1;
-        margin: 1 1 0 0;
-        text-align: center;
-        text-style: bold;
-    }
-    .avatar-blue { color: #4a90e2; }
-    .avatar-green { color: #7ed321; }
-    .avatar-yellow { color: #f5a623; }
-    .avatar-magenta { color: #bd10e0; }
-    .avatar-cyan { color: #50e3c2; }
-    .avatar-white { color: #9b9b9b; }
     
-    #messages:focus {
-        border-bottom: heavy $primary;
+    .chat-avatar-mini {
+        width: 16;
+        height: 4;
+        margin-right: 1;
     }
     
     .chat-title {
         width: 1fr;
         height: 1;
         content-align: left middle;
-        text-overflow: ellipsis;
         margin-top: 1;
     }
+    
     .chat-unread {
         width: auto;
         min-width: 3;
-        height: 1;
-        color: $accent;
-        background: $surface;
-        content-align: right middle;
+        background: $accent;
+        color: $text;
+        text-align: center;
         text-style: bold;
         margin-top: 1;
-        padding: 0 1;
-    }
-    #login-form, #profile-container {
-        width: 50;
-        margin: 4 4;
-        padding: 1 2;
-        border: heavy $primary;
-    }
-    #login-title, #profile-title {
-        text-align: center;
-        width: 100%;
-        margin-bottom: 1;
-        text-style: bold;
-        color: $accent;
-    }
-    #profile-details {
-        margin-bottom: 1;
-        padding: 1;
-    }
-    Input {
-        margin-bottom: 1;
-        border: tall $primary;
-    }
-    Input:focus {
-        border: tall $accent;
-    }
-    Tabs {
-        height: 3;
-        border-bottom: solid $primary;
     }
     """
 
-    BINDINGS = Keymap.GLOBAL
+    BINDINGS = [
+        Binding("ctrl+c", "quit", "Quit", show=True),
+        Binding("q", "quit", "Quit", show=True),
+    ]
 
     def __init__(self, *args, **kwargs):
         """
-        Initialize the application state, configuration, and manager components.
+        Set up the application state and load local configuration.
         """
         super().__init__(*args, **kwargs)
         self.configuration = load_application_configuration()
-        self.telegram_manager: TelegramManager | None = None
+        self.telegram_manager: Optional[TelegramManager] = None
         if self.configuration:
             self.telegram_manager = TelegramManager(self.configuration)
 
     async def on_mount(self) -> None:
         """
-        Establish Telegram connection and determine the initial screen based on authentication.
+        Establish connection to Telegram upon application startup.
+        
+        This method checks for an active session and authenticates the user.
+        If no session is found, it redirects the user to the Login screen.
         """
+        from telegram_textual_tui.core.avatars import ascii_render_native
+        if ascii_render_native is None:
+            self.notify("ASCII Render module not loaded!", severity="error")
+
         if not self.telegram_manager:
             await self.push_screen(LoginScreen())
         else:
@@ -153,12 +163,32 @@ class TGTApp(App):
 
     def compose(self) -> ComposeResult:
         """
-        Compose the main application layout including the global header and footer.
+        Define the global UI components like the Header and Footer.
         """
         yield Header()
         yield Footer()
 
+    async def action_show_user_profile(self, user_id: str, msg_id: str = "") -> None:
+        """
+        Navigate to a specific user's profile screen.
+        
+        This action is globally available and can be triggered by clicking 
+        on user names within message logs.
+
+        Args:
+            user_id: The unique Telegram user ID (as string).
+            msg_id: An optional message ID to ensure the clickable link is unique.
+        """
+        try:
+            uid = int(user_id)
+            await self.push_screen(ProfileScreen(user_id=uid))
+        except (ValueError, TypeError):
+            pass
+
+
 def main():
-    """Entry point for the TUI application."""
+    """
+    Application entry point. Initializes and runs the TUI.
+    """
     app = TGTApp()
     app.run()
