@@ -1,0 +1,4 @@
+telethon>=1.36,<2.0
+textual>=0.86,<2.0
+rich>=13.7
+python-dotenv==1.2.2
