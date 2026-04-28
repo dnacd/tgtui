@@ -20,6 +20,7 @@ from telethon.tl.types import (
 )
 from rich.panel import Panel
 from rich.text import Text
+from rich.console import Console
 from textual import events as textual_events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -64,6 +65,7 @@ class MainScreen(Screen):
         self._loaded_messages: List[Any] = []
         self._sender_cache: Dict[int, str] = {}
         self._is_loading_more = False
+        self._is_loading_chats = False
         self._last_load_time = 0.0
 
         self._history_controller = HistoryController(self.app.telegram_manager)
@@ -119,32 +121,52 @@ class MainScreen(Screen):
         if messages_log.scroll_offset.y <= 1:
             await self.action_load_more_history()
 
+    @on(ListView.Highlighted, "#chat-list")
+    async def on_chat_list_highlighted(self, event: ListView.Highlighted) -> None:
+        """Trigger loading more chats when reaching the bottom via keyboard."""
+        chat_list = self.query_one(ChatList)
+        if event.list_view.index is not None and event.list_view.index >= len(chat_list.children) - 3:
+            self.run_worker(self.action_load_more_chats())
+
     async def action_scroll_messages_down(self) -> None:
         """Scroll the message history log downwards."""
         self.query_one("#messages", RichLog).scroll_down()
 
     async def action_load_more_history(self) -> None:
-        """Fetch older messages and prepend them to the view with debouncing."""
+        """Fetch older messages and prepend them to the view with scroll anchoring."""
         if not self._selected_dialog_entity or self._is_loading_more or not self._loaded_messages:
             return
             
         current_time = time.time()
-        if current_time - self._last_load_time < 1.5:
+        if current_time - self._last_load_time < 1.0:
             return
 
         self._is_loading_more = True
         self._last_load_time = current_time
         try:
+            log = self.query_one("#messages", RichLog)
+            # Record height before prepending
+            old_height = log.virtual_size.height
+            
             oldest_id = self._loaded_messages[0].id
             older_messages = await self._history_controller.get_messages(
                 self._selected_dialog_entity, 
-                limit=30, 
+                limit=20, 
                 offset_id=oldest_id
             )
             
             if older_messages:
                 self._loaded_messages = list(reversed(older_messages)) + self._loaded_messages
-                await self._render_messages()
+                await self._render_messages(scroll_to_end=False)
+                
+                # Correct scroll position after layout refresh
+                def anchor_scroll():
+                    new_height = log.virtual_size.height
+                    delta = new_height - old_height
+                    if delta > 0:
+                        log.scroll_to(y=delta, animate=False)
+                
+                self.call_after_refresh(anchor_scroll)
         finally:
             self._is_loading_more = False
 
@@ -230,14 +252,51 @@ class MainScreen(Screen):
         self._reaction_target_message_id = message_id
 
     async def action_reload_all_dialogs(self) -> None:
-        """Update the sidebar with the latest 100 dialogs using batch mounting."""
+        """Update the sidebar with the latest batch of 10 dialogs."""
+        if self._is_loading_chats:
+            return
+            
+        self._is_loading_chats = True
+        try:
+            chat_list = self.query_one(ChatList)
+            chat_list.clear()
+            # Fetch only 1 for instant response, pagination will do the rest
+            dialogs = await self._chat_controller.fetch_dialogs(limit=1)
+            
+            items = [ChatItem(dialog) for dialog in dialogs]
+            chat_list.extend(items)
+            self._sync_chat_filter()
+        finally:
+            self._is_loading_chats = False
+
+    async def action_load_more_chats(self) -> None:
+        """Fetch the next batch of 10 chats when reaching the bottom."""
+        if self._is_loading_chats:
+            return
+            
         chat_list = self.query_one(ChatList)
-        chat_list.clear()
-        dialogs = await self._chat_controller.fetch_dialogs(limit=100)
-        
-        items = [ChatItem(dialog) for dialog in dialogs]
-        await chat_list.mount_all(items)
-        self._sync_chat_filter()
+        # ListView items are in chat_list.children
+        if not chat_list.children:
+            return
+            
+        self._is_loading_chats = True
+        try:
+            last_item = chat_list.children[-1]
+            if not isinstance(last_item, ChatItem):
+                return
+                
+            last_date = last_item.dialog.date
+            dialogs = await self._chat_controller.fetch_dialogs(limit=10, offset_date=last_date)
+            
+            # Skip the first one if it's a duplicate
+            new_dialogs = [d for d in dialogs if utils.get_peer_id(d.entity) != utils.get_peer_id(last_item.dialog.entity)]
+            
+            if new_dialogs:
+                items = [ChatItem(dialog) for dialog in new_dialogs]
+                chat_list.extend(items)
+                self._sync_chat_filter()
+        finally:
+            self._is_loading_chats = False
 
     def compose(self) -> ComposeResult:
         """Compose the main layout components."""
@@ -271,6 +330,23 @@ class MainScreen(Screen):
             
             self.set_interval(5.0, self._poll_read_status)
             await self.action_reload_all_dialogs()
+            
+            # Periodic check for message history scroll (to load older messages)
+            self.set_interval(0.3, self._check_history_scroll_top)
+
+    def _check_history_scroll_top(self) -> None:
+        """Check if message log is at the top to trigger older history loading."""
+        if not self._selected_dialog_entity or self._is_loading_more:
+            return
+            
+        messages_log = self.query_one("#messages", RichLog)
+        if messages_log.scroll_offset.y <= 1:
+            self.run_worker(self.action_load_more_history())
+
+    @on(ChatList.ReachedBottom)
+    def on_chat_list_reached_bottom(self) -> None:
+        """Handle signal from ChatList that it needs more items."""
+        self.run_worker(self.action_load_more_chats())
 
     async def _poll_read_status(self) -> None:
         """Periodically check for read status updates to ensure UI consistency."""
@@ -434,7 +510,7 @@ class MainScreen(Screen):
         log.write(panel)
         log.scroll_end()
 
-    async def _render_messages(self) -> None:
+    async def _render_messages(self, scroll_to_end: bool = True) -> None:
         """Render all loaded messages using a high-performance batch process."""
         log = self.query_one("#messages", RichLog)
         log.clear()
@@ -465,7 +541,8 @@ class MainScreen(Screen):
         for panel in panels:
             log.write(panel)
         
-        log.scroll_end()
+        if scroll_to_end:
+            log.scroll_end()
 
     async def _load_message_history(self, entity: Any, item: Optional[ChatItem] = None) -> None:
         """
@@ -506,7 +583,8 @@ class MainScreen(Screen):
             except Exception:
                 pass
 
-        messages = await self._history_controller.get_messages(entity, limit=30)
+        # Fetch only 1 message for instant response
+        messages = await self._history_controller.get_messages(entity, limit=1)
         self._loaded_messages = list(reversed(messages))
 
         if self._loaded_messages:

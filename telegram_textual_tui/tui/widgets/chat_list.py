@@ -9,6 +9,7 @@ the collection of items, providing filtering by category and search term.
 from typing import Any, Callable, Dict, Optional
 
 from telethon.tl.types import Channel, Chat, User
+from textual import message
 from textual.app import ComposeResult
 from textual.widgets import Label, ListItem, ListView
 
@@ -90,6 +91,10 @@ class ChatList(ListView):
     A scrollable list of ChatItems with filtering capabilities.
     """
 
+    class ReachedBottom(message.Message):
+        """Sent when the list is scrolled near the bottom."""
+        pass
+
     # Mapping of filter keys to predicate functions for easy classification
     FILTER_MAP: Dict[str, Callable[[Any], bool]] = {
         "all": lambda _: True,
@@ -97,6 +102,21 @@ class ChatList(ListView):
         "groups": lambda entity: isinstance(entity, (Chat, Channel)),
         "bots": lambda entity: isinstance(entity, User) and entity.bot,
     }
+
+    def watch_scroll_offset(self) -> None:
+        """Monitor scroll position and notify when near the bottom."""
+        self._check_scroll_bottom()
+
+    def on_mount(self) -> None:
+        """Set up a periodic check for the scroll position to ensure reliability."""
+        self.set_interval(0.3, self._check_scroll_bottom)
+
+    def _check_scroll_bottom(self) -> None:
+        """Check if the list is scrolled near the bottom and trigger pagination."""
+        if self.virtual_size.height > 0:
+            # If we are within half a screen height of the bottom
+            if self.scroll_offset.y + self.size.height >= self.virtual_size.height - 5:
+                self.post_message(self.ReachedBottom())
 
     def action_cursor_down(self) -> None:
         """
