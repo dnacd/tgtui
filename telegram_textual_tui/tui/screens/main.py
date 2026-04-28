@@ -28,10 +28,11 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Input, Label, ListView, RichLog
+from textual.widgets import Input, Label, ListView, RichLog, Tabs
 
 from telegram_textual_tui.tui.screens.profile import ProfileScreen
 from telegram_textual_tui.tui.widgets.chat_list import ChatItem, ChatList
+from telegram_textual_tui.tui.widgets.chat_tabs import ChatTabs
 from telegram_textual_tui.utils.formatters import get_telegram_entity_title
 
 if TYPE_CHECKING:
@@ -60,6 +61,7 @@ class MainScreen(Screen):
         Binding("ctrl+s", "focus_search", "Search", show=False),
         Binding("ctrl+l", "focus_chat_list", "Chats"),
         Binding("ctrl+i", "focus_message_input", "Input"),
+        Binding("tab", "focus_message_input", "Input", show=False),
         Binding("escape", "focus_message_input", "Input", show=False),
         Binding("p", "show_my_profile", "My Profile"),
         Binding("u", "show_partner_profile", "User Profile"),
@@ -67,7 +69,17 @@ class MainScreen(Screen):
         Binding("l", "reload_all_dialogs", "Reload"),
         Binding("pageup", "scroll_messages_up", "Scroll Up", show=False),
         Binding("pagedown", "scroll_messages_down", "Scroll Down", show=False),
+        Binding("[", "prev_tab", "Previous Tab", show=False),
+        Binding("]", "next_tab", "Next Tab", show=False),
     ]
+
+    async def action_next_tab(self) -> None:
+        """Switch to the next chat category tab."""
+        self.query_one(ChatTabs).action_next_tab()
+
+    async def action_prev_tab(self) -> None:
+        """Switch to the previous chat category tab."""
+        self.query_one(ChatTabs).action_prev_tab()
 
     async def action_show_my_profile(self) -> None:
         """
@@ -226,6 +238,7 @@ class MainScreen(Screen):
         with Horizontal():
             with Vertical(id="sidebar"):
                 yield Input(placeholder="Search chats...", id="chat-search")
+                yield ChatTabs(id="chat-tabs")
                 yield ChatList(id="chat-list")
             with Vertical(id="chat-area"):
                 yield RichLog(id="messages", highlight=True, markup=True)
@@ -291,13 +304,38 @@ class MainScreen(Screen):
                     await item.mount(Label(str(item.dialog.unread_count), classes="chat-unread"))
                 break
 
+    @on(Tabs.TabActivated)
+    def on_tab_activated(self) -> None:
+        """Handle chat category tab switching."""
+        self._sync_chat_filter()
+
     @on(Input.Changed, "#chat-search")
-    def on_search_filter_changed(self, event: Input.Changed) -> None:
-        """Filter the chat list sidebar."""
-        term = event.value.lower()
-        for item in self.query_one(ChatList).children:
-            if isinstance(item, ChatItem):
-                item.display = term in item.search_text
+    def on_search_filter_changed(self) -> None:
+        """Filter the chat list sidebar based on search term."""
+        self._sync_chat_filter()
+
+    @on(Input.Submitted, "#chat-search")
+    def on_search_submitted(self) -> None:
+        """
+        Handle search submission by focusing the chat list.
+        Allows for immediate keyboard navigation after search.
+        """
+        chat_list = self.query_one(ChatList)
+        if chat_list.index is not None:
+            chat_list.focus()
+
+    def _sync_chat_filter(self) -> None:
+        """
+        Coordinate filtering between category tabs and search input.
+        """
+        try:
+            search_term = self.query_one("#chat-search", Input).value
+            active_tab = self.query_one(ChatTabs).active_tab
+            category = active_tab.id if active_tab else "all"
+            self.query_one(ChatList).apply_filter(category, search_term)
+        except Exception:
+            # Handle cases where widgets might not be mounted yet
+            pass
 
     async def _load_message_history(self, entity: Any, item: Optional[ChatItem] = None) -> None:
         """Fetch and render message history for the selected peer."""
