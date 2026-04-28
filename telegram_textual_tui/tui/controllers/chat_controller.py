@@ -23,16 +23,20 @@ class ChatController:
         Fetch the ID of the last message read by the recipient in this chat.
         """
         try:
-            target_id = getattr(entity, "id", None)
+            from telethon import utils
+            target_id = utils.get_peer_id(entity)
             if not target_id:
                 return 0
                 
-            async for dialog in self._manager.client.iter_dialogs(limit=100):
-                if dialog.entity and dialog.entity.id == target_id:
-                    return max(
-                        getattr(dialog, "read_outbox_max_id", 0),
-                        getattr(dialog.dialog, "read_outbox_max_id", 0) if hasattr(dialog, "dialog") else 0
-                    )
+            # Use get_dialogs which is often cached or more efficient than iter_dialogs for this
+            dialogs = await self._manager.client.get_dialogs(limit=100)
+            for d in dialogs:
+                if utils.get_peer_id(d.entity) == target_id:
+                    # Check both the custom dialog wrapper and the raw dialog object
+                    val = getattr(d, "read_outbox_max_id", 0)
+                    if not val and hasattr(d, "dialog"):
+                        val = getattr(d.dialog, "read_outbox_max_id", 0)
+                    return val
         except Exception:
             pass
         return 0

@@ -281,7 +281,33 @@ class MainScreen(Screen):
             application_instance.telegram_manager.client.add_event_handler(
                 self._handle_incoming_new_message, events.NewMessage
             )
+            application_instance.telegram_manager.client.add_event_handler(
+                self._handle_message_read, events.MessageRead
+            )
+            
+            # Start polling for read status updates every 5 seconds
+            self.set_interval(5.0, self._poll_read_status)
+            
             await self.action_reload_all_dialogs()
+
+    async def _poll_read_status(self) -> None:
+        """Periodically check for read status updates to ensure UI consistency."""
+        if not self._selected_dialog_entity or not self._selected_dialog_id:
+            return
+
+        # Fetch fresh read status from the server
+        new_max_id = await self._chat_controller.get_read_outbox_max_id(self._selected_dialog_entity)
+        
+        # If it changed, update and re-render
+        if new_max_id > self._read_outbox_maximum_id:
+            self._read_outbox_maximum_id = new_max_id
+            await self._render_messages()
+            # Also update the chat list item state for consistency
+            chat_list = self.query_one(ChatList)
+            for item in chat_list.children:
+                if isinstance(item, ChatItem) and item.dialog.id == self._selected_dialog_id:
+                    item.dialog.read_outbox_max_id = new_max_id
+                    break
 
     async def on_unmount(self) -> None:
         """Cleanup event handlers."""
@@ -290,6 +316,40 @@ class MainScreen(Screen):
             application_instance.telegram_manager.client.remove_event_handler(
                 self._handle_incoming_new_message, events.NewMessage
             )
+            application_instance.telegram_manager.client.remove_event_handler(
+                self._handle_message_read, events.MessageRead
+            )
+
+    async def _handle_message_read(self, event: events.MessageRead.Event) -> None:
+        """Update read status indicators and chat list badges when messages are read."""
+        event_peer_id = utils.get_peer_id(event.peer)
+        
+        # 1. Always update the state in the ChatList items for persistence
+        chat_list = self.query_one(ChatList)
+        for item in chat_list.children:
+            if isinstance(item, ChatItem) and item.dialog.id == event_peer_id:
+                if event.out:
+                    # Recipient read our messages
+                    if event.max_id > getattr(item.dialog, "read_outbox_max_id", 0):
+                        item.dialog.read_outbox_max_id = event.max_id
+                else:
+                    # We read their messages
+                    item.dialog.unread_count = 0
+                    try:
+                        badge = item.query_one(".chat-unread")
+                        badge.remove()
+                    except Exception:
+                        pass
+                break
+
+        # 2. If it's the currently opened chat, update the UI log
+        if self._selected_dialog_id == event_peer_id:
+            if event.out:
+                if event.max_id > self._read_outbox_maximum_id:
+                    self._read_outbox_maximum_id = event.max_id
+                    # Refresh messages to update the dots
+                    await self._render_messages()
+                    self.notify("Message read", severity="information", timeout=2)
 
     @on(Tabs.TabActivated)
     def on_tab_activated(self) -> None:
@@ -401,8 +461,14 @@ class MainScreen(Screen):
         
         status_dot = ""
         if msg.out:
-            is_read = msg.id <= self._read_outbox_maximum_id
+            # Saved Messages (self chat) always have messages as read
+            is_saved_messages = False
+            if self._me and self._selected_dialog_id == self._me.id:
+                is_saved_messages = True
+            
+            is_read = is_saved_messages or (self._read_outbox_maximum_id > 0 and msg.id <= self._read_outbox_maximum_id)
             dot_color = "bold purple" if is_read else "dim"
+            # Keep it simple but more accurate
             status_dot = f" [{dot_color}]•[/{dot_color}]"
         
         title = f"[bold cyan]{name}[/] [dim]• {timestamp}[/]"
@@ -446,11 +512,15 @@ class MainScreen(Screen):
         # Reset state
         self._loaded_messages = []
         self._sender_cache = {}
+        self._read_outbox_maximum_id = 0
         if self._me:
             self._sender_cache[self._me.id] = get_telegram_entity_title(self._me)
 
-        # Fetch fresh read status
-        self._read_outbox_maximum_id = await self._chat_controller.get_read_outbox_max_id(entity)
+        # Fetch fresh read status from the item if possible, otherwise from controller
+        if item and hasattr(item.dialog, "read_outbox_max_id"):
+            self._read_outbox_maximum_id = item.dialog.read_outbox_max_id
+        else:
+            self._read_outbox_maximum_id = await self._chat_controller.get_read_outbox_max_id(entity)
 
         log = self.query_one("#messages", RichLog)
         log.clear()
